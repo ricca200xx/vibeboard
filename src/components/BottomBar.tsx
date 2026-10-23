@@ -1,0 +1,464 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowUp, ChevronUp, GitBranch, Mic, Minus, Plus, RotateCw, Square, X } from 'lucide-react'
+import { api, type GitInfo } from '../api'
+import { consoles, EMPTY, project, useStore, workspace } from '../store'
+import { AGENTS, agentById } from '../../shared/agents.js'
+import { AgentGlyph, AgentIcon } from './icons'
+import { runPlanner } from '../planner'
+
+const CHIPS = {
+  new: ['#3ecfb2', '#f472b6'],
+  spawn: ['#7fd36b', '#f0553a'],
+  group: ['#d9c34a', '#8a7a3a'],
+  presets: ['#f5a33d', '#5b8cff'],
+  pause: ['#f0553a', '#5b8cff'],
+  resume: ['#f472b6', '#3ecf8e'],
+  memory: ['#a477ff', '#f5d547'],
+}
+
+const ROLES: [string, string][] = [
+  ['Frontend', '#f5a33d'],
+  ['Backend', '#a477ff'],
+  ['Testers', '#3ecf8e'],
+  ['Reviewers', '#5b8cff'],
+  ['Design', '#f472b6'],
+  ['Docs', '#4fd1d9'],
+  ['Security', '#ff5a4e'],
+  ['General', '#8a847c'],
+]
+const FILL = ['claude', 'codex', 'gemini', 'opencode', 'copilot', 'shell', 'aider', 'cursor', 'qwen', 'goose']
+
+function Chip({ k, label, onClick, on }: { k: keyof typeof CHIPS; label: string; onClick: () => void; on?: boolean }) {
+  const [a, b] = CHIPS[k]
+  return (
+    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} onClick={onClick}>
+      {label}
+    </button>
+  )
+}
+
+export function BottomBar() {
+  const modal = useStore((s) => s.modal)
+  const defaultAgent = useStore((s) => s.settings.defaultAgent)
+  const [composer, setComposer] = useState(false)
+  const s = useStore.getState()
+
+  return (
+    <div className="bottom">
+      <div style={{ position: 'relative' }}>
+        {composer && <Composer onClose={() => setComposer(false)} />}
+        {modal === 'presets' && <Presets />}
+        <div className="chips">
+          <Chip k="new" label="New console" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
+          <Chip k="spawn" label="Spawn 4" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
+          <Chip
+            k="group"
+            label="Group"
+            on={composer}
+            onClick={() => {
+              const selected = consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected && !n.parentId)
+              if (selected.length) s.groupSelected()
+              else setComposer((v) => !v)
+            }}
+          />
+          <Chip k="presets" label="Presets" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
+          <Chip k="pause" label="Pause all" onClick={s.pauseAll} />
+          <Chip k="resume" label="Resume all" onClick={s.resumeAll} />
+          <Chip k="memory" label="Memory" onClick={() => s.set({ modal: 'memory' })} />
+        </div>
+      </div>
+      <CommandBar />
+    </div>
+  )
+}
+
+function Composer({ onClose }: { onClose: () => void }) {
+  const defaultAgent = useStore((s) => s.settings.defaultAgent)
+  const [name, setName] = useState('Team')
+  const [role, setRole] = useState('General')
+  const [slots, setSlots] = useState<string[]>(Array(4).fill(defaultAgent))
+  const [more, setMore] = useState(false)
+  const resize = (n: number) => setSlots((cur) => Array.from({ length: Math.max(1, Math.min(12, n)) }, (_, i) => cur[i] ?? cur[cur.length - 1] ?? defaultAgent))
+  const cycle = (i: number) => setSlots((cur) => cur.map((a, k) => (k === i ? FILL[(FILL.indexOf(a) + 1) % FILL.length] : a)))
+  const roleColor = ROLES.find((r) => r[0] === role)?.[1] ?? '#8a847c'
+
+  return (
+    <div className="menu composer nowheel">
+      <div className="name">
+        <span className="dot" style={{ background: roleColor }} />
+        <input value={name} onChange={(e) => setName(e.target.value)} onFocus={(e) => e.target.select()} />
+        <button className="icon-btn sm" onClick={onClose}>
+          <X size={14} />
+        </button>
+      </div>
+      <div className="roles">
+        {ROLES.map(([r, c]) => (
+          <button
+            key={r}
+            className={role === r ? 'on' : ''}
+            onClick={() => {
+              setRole(r)
+              if (name === 'Team' || ROLES.some(([x]) => x === name)) setName(r)
+            }}
+          >
+            <span className="dot" style={{ background: c, width: 7, height: 7 }} />
+            {r}
+          </button>
+        ))}
+      </div>
+      <div className="slots">
+        {slots.map((a, i) => (
+          <button key={i} className="slot" style={{ ['--c' as string]: agentById(a)?.color }} onClick={() => cycle(i)} title="Click to change agent">
+            <AgentIcon id={a} size={36} />
+            {agentById(a)?.name}
+          </button>
+        ))}
+      </div>
+      <div className="fill-row">
+        Fill all
+        {(more ? AGENTS.map((a) => a.id) : FILL).map((id) => (
+          <button key={id} title={agentById(id)?.name} onClick={() => setSlots((cur) => cur.map(() => id))}>
+            <AgentGlyph id={id} size={20} />
+          </button>
+        ))}
+        {!more && (
+          <button className="round-btn" style={{ width: 28, height: 28 }} onClick={() => setMore(true)}>
+            <Plus size={14} />
+          </button>
+        )}
+      </div>
+      <div className="composer-foot">
+        <button className="icon-btn" onClick={() => resize(slots.length - 1)}>
+          <Minus size={16} />
+        </button>
+        <span style={{ minWidth: 22, textAlign: 'center' }}>{slots.length}</span>
+        <button className="icon-btn" onClick={() => resize(slots.length + 1)} disabled={slots.length >= 12}>
+          <Plus size={16} />
+        </button>
+        <button
+          className="spawn-btn"
+          onClick={() => {
+            useStore.getState().spawnMany(slots, name.trim() || role)
+            onClose()
+          }}
+        >
+          Spawn {slots.length}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function Presets() {
+  const presets = useStore((s) => s.presets)
+  const [naming, setNaming] = useState<string | null>(null)
+  const s = useStore.getState()
+  const selectedAgents = () => consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected).map((n) => n.data.agent)
+  return (
+    <div className="menu nowheel" style={{ bottom: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)', width: 380 }}>
+      <div className="menu-title">Presets</div>
+      {presets.map((p) => (
+        <button
+          key={p.id}
+          className="menu-item"
+          onClick={() => {
+            s.spawnMany(p.agents, p.label)
+            s.set({ modal: null })
+          }}
+        >
+          <span style={{ display: 'flex', gap: 3 }}>
+            {p.agents.slice(0, 5).map((a, i) => (
+              <AgentIcon key={i} id={a} size={24} />
+            ))}
+          </span>
+          <span style={{ flex: 1 }}>
+            <div className="title" style={{ fontSize: 14 }}>
+              {p.name}
+            </div>
+            <div className="sub">
+              {p.agents.length} console{p.agents.length > 1 ? 's' : ''}
+              {p.label ? ` · group "${p.label}"` : ''}
+            </div>
+          </span>
+        </button>
+      ))}
+      {naming === null ? (
+        <button
+          className="menu-item"
+          onClick={() => (selectedAgents().length ? setNaming('') : s.notify('Select consoles to save them as a preset'))}
+        >
+          <Plus size={16} color="var(--accent)" style={{ margin: '0 4px' }} />
+          <span className="title" style={{ fontSize: 14 }}>
+            Save selection as preset
+          </span>
+        </button>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, padding: 8 }}>
+          <input className="field" autoFocus placeholder="Preset name" value={naming} onChange={(e) => setNaming(e.target.value)} />
+          <button
+            className="btn primary"
+            onClick={() => {
+              if (naming.trim()) s.savePreset({ name: naming.trim(), agents: selectedAgents() })
+              setNaming(null)
+            }}
+          >
+            Save
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+type Recognition = { start: () => void; stop: () => void; onresult: (e: any) => void; onend: () => void; interimResults: boolean; continuous: boolean; lang: string }
+
+function CommandBar() {
+  const nodes = useStore((s) => workspace(s)?.nodes ?? EMPTY)
+  const [text, setText] = useState('')
+  const [mention, setMention] = useState<string | null>(null)
+  const [history, setHistory] = useState<string[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [listening, setListening] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [reply, setReply] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const recRef = useRef<Recognition | null>(null)
+  const fromVoice = useRef(false)
+
+  const targets = useMemo(() => {
+    const list = consoles(nodes).map((n) => ({ name: n.data.name, ids: [n.id], agent: n.data.agent }))
+    const groups = nodes
+      .filter((n) => n.type === 'group')
+      .map((g) => ({ name: String((g.data as { label: string }).label), ids: nodes.filter((n) => n.parentId === g.id && n.type === 'console').map((n) => n.id), agent: '' }))
+    return [...list, ...groups, { name: 'all', ids: consoles(nodes).map((n) => n.id), agent: '' }]
+  }, [nodes])
+
+  const startVoice = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) return useStore.getState().notify('Dictation is not available in this browser')
+    const rec: Recognition = new SR()
+    rec.interimResults = true
+    rec.continuous = true
+    rec.lang = navigator.language
+    const base = text ? `${text} ` : ''
+    rec.onresult = (e) => setText(base + [...e.results].map((r: any) => r[0].transcript).join(''))
+    rec.onend = () => setListening(false)
+    rec.start()
+    recRef.current = rec
+    fromVoice.current = true
+    setListening(true)
+  }
+  const stopVoice = () => {
+    recRef.current?.stop()
+    setListening(false)
+    inputRef.current?.focus()
+  }
+
+  // Hold space anywhere on the board (not while typing) to dictate. Dictation only types: Enter is yours.
+  useEffect(() => {
+    const busyTarget = (e: KeyboardEvent) => (e.target as HTMLElement).closest('input, textarea, [contenteditable], .xterm')
+    const down = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat && !busyTarget(e) && !useStore.getState().modal) {
+        e.preventDefault()
+        startVoice()
+      }
+    }
+    const up = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && recRef.current && listening) stopVoice()
+    }
+    addEventListener('keydown', down)
+    addEventListener('keyup', up)
+    return () => {
+      removeEventListener('keydown', down)
+      removeEventListener('keyup', up)
+    }
+  })
+
+  const say = (msg: string) => {
+    setReply(msg)
+    setTimeout(() => setReply((r) => (r === msg ? null : r)), 6000)
+    if (fromVoice.current && useStore.getState().settings.speak !== false && 'speechSynthesis' in window) speechSynthesis.speak(new SpeechSynthesisUtterance(msg))
+  }
+
+  const submit = async () => {
+    const raw = text.trim()
+    if (!raw || busy) return
+    setHistory((h) => [raw, ...h.filter((x) => x !== raw)].slice(0, 20))
+    setText('')
+    setMention(null)
+    const s = useStore.getState()
+    // Longest names first so "@Maya 2" wins over "@Maya".
+    const sorted = [...targets].sort((a, b) => b.name.length - a.name.length)
+    let rest = raw
+    const ids = new Set<string>()
+    for (const t of sorted) {
+      const re = new RegExp(`@${t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+      if (re.test(rest)) {
+        t.ids.forEach((id) => ids.add(id))
+        rest = rest.replace(re, '').trim()
+      }
+    }
+    if (ids.size) {
+      s.sendTo([...ids], rest)
+      say(`Sent to ${ids.size} console${ids.size > 1 ? 's' : ''}`)
+    } else {
+      setBusy(true)
+      try {
+        say(await runPlanner(raw))
+      } catch (e) {
+        say(`Planner failed: ${(e as Error).message}`)
+      } finally {
+        setBusy(false)
+      }
+    }
+    fromVoice.current = false
+  }
+
+  const candidates = mention === null ? [] : targets.filter((t) => t.name.toLowerCase().startsWith(mention.toLowerCase())).slice(0, 8)
+  const pickMention = (name: string) => {
+    setText((t) => t.replace(/@[\w ]*$/, `@${name} `))
+    setMention(null)
+    inputRef.current?.focus()
+  }
+
+  return (
+    <div className={`commandbar ${listening ? 'listening' : ''}`}>
+      {candidates.length > 0 && (
+        <div className="menu mentions">
+          {candidates.map((c) => (
+            <button key={c.name} className="menu-item" onMouseDown={(e) => (e.preventDefault(), pickMention(c.name))}>
+              {c.agent ? <AgentIcon id={c.agent} size={24} /> : <span className="agent-icon" style={{ width: 24, height: 24, background: 'var(--panel-3)' }}>@</span>}
+              <span className="title" style={{ fontSize: 14 }}>
+                {c.name}
+              </span>
+              <span className="sub">{c.ids.length > 1 || !c.agent ? `${c.ids.length} consoles` : ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {showHistory && history.length > 0 && (
+        <div className="menu mentions" style={{ left: 'auto', right: 0, width: 360 }}>
+          <div className="menu-title">Recent</div>
+          {history.map((h) => (
+            <button
+              key={h}
+              className="menu-item"
+              onClick={() => {
+                setText(h)
+                setShowHistory(false)
+                inputRef.current?.focus()
+              }}
+            >
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="orb" />
+      {listening && !text ? (
+        <div className="listening-label" style={{ flex: 1 }}>
+          <span className="dot" style={{ background: 'var(--accent)', width: 10, height: 10 }} /> listening
+          <span className="bars">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+        </div>
+      ) : (
+        <input
+          ref={inputRef}
+          value={text}
+          placeholder={busy ? 'Planning…' : 'Hold space to speak · @ to direct...'}
+          onChange={(e) => {
+            setText(e.target.value)
+            const m = e.target.value.slice(0, e.target.selectionStart ?? undefined).match(/@([\w ]*)$/)
+            setMention(m ? m[1] : null)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') submit()
+            if (e.key === 'Escape') setMention(null)
+            if (e.key === 'Tab' && candidates[0]) {
+              e.preventDefault()
+              pickMention(candidates[0].name)
+            }
+          }}
+        />
+      )}
+      {busy && <RotateCw size={16} color="var(--muted)" style={{ animation: 'spin 1s linear infinite' }} />}
+      <button className="round-btn" title="Recent commands" onClick={() => setShowHistory((v) => !v)}>
+        <ChevronUp size={17} />
+      </button>
+      <button className="round-btn" title="Send" onClick={submit}>
+        <ArrowUp size={16} />
+      </button>
+      <button className={`round-btn ${listening ? 'hot' : ''}`} title="Dictate" onClick={() => (listening ? stopVoice() : startVoice())}>
+        {listening ? <Square size={13} fill="currentColor" /> : <Mic size={16} />}
+      </button>
+      {reply && (
+        <div className="hint-chip" style={{ position: 'absolute', top: -34, left: '50%', transform: 'translateX(-50%)', whiteSpace: 'nowrap', color: 'var(--text-2)' }}>
+          {reply}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function GitPill() {
+  const p = useStore(project)!
+  const [git, setGit] = useState<GitInfo | null>(null)
+  const [open, setOpen] = useState(false)
+  const load = () => api.git(p.path).then(setGit).catch(() => setGit(null))
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 15_000)
+    return () => clearInterval(t)
+  }, [p.path])
+  if (!git) return null
+  const repo = git.remote?.replace(/^.*[:/]([^/]+\/[^/]+?)(\.git)?$/, '$1') ?? p.name
+  return (
+    <div style={{ position: 'relative' }}>
+      {open && (
+        <div className="menu card-node" style={{ bottom: 48, left: 0, width: 380, height: 'auto', maxHeight: 460, padding: 0 }}>
+          <div className="card-head" style={{ cursor: 'default' }}>
+            <span className="agent-icon" style={{ background: 'var(--panel-3)' }}>
+              <GitBranch size={17} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <div className="t" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {repo}
+              </div>
+              <div className="s">
+                {git.branch} · {git.changes ? `${git.changes} changed` : 'clean'}
+              </div>
+            </span>
+            <button className="icon-btn sm" onClick={load} title="Refresh">
+              <RotateCw size={13} />
+            </button>
+            <button className="icon-btn sm" onClick={() => setOpen(false)}>
+              <X size={14} />
+            </button>
+          </div>
+          <div className="section-label" style={{ padding: '6px 16px' }}>
+            History {git.commits.length}
+          </div>
+          <div style={{ overflow: 'auto', paddingBottom: 10 }} className="nowheel">
+            {git.commits.map((c) => (
+              <div className="commit" key={c.hash}>
+                <span className="bullet" />
+                <span className="subject">{c.subject}</span>
+                <span className="when">{c.when}</span>
+                <span className="meta">
+                  {c.hash} · {c.author}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <button className="pill git-pill" onClick={() => setOpen((v) => !v)}>
+        <GitBranch size={15} /> {git.branch} {git.changes > 0 && <span className="n">{git.changes}</span>}
+      </button>
+    </div>
+  )
+}
