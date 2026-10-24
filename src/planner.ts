@@ -11,22 +11,39 @@ export type PlanAction =
   | { type: 'pause' }
   | { type: 'resume' }
 
+const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === 'string')
+
+// The model's output is untrusted shape-wise: drop anything malformed instead of throwing mid-plan.
+function valid(a: PlanAction): boolean {
+  const x = a as Record<string, unknown>
+  if (a.type === 'send') return strings(x.to) && typeof x.text === 'string'
+  if (a.type === 'spawn') return typeof x.agent === 'string'
+  if (a.type === 'group') return strings(x.names) && typeof x.label === 'string'
+  if (a.type === 'frame') return strings(x.names)
+  return a.type === 'pause' || a.type === 'resume'
+}
+
 export async function runPlanner(command: string): Promise<string> {
   const s = useStore.getState()
-  const ws = workspace(s)!
-  const groups = ws.nodes.filter((n) => n.type === 'group')
+  const ws = workspace(s)
+  if (!ws) return 'Open a board first'
+  const where = { active: s.active, ws: ws.id }
   const board = {
     consoles: consoles(ws.nodes).map((n) => ({
       name: n.data.name,
       agent: n.data.agent,
       status: s.live[n.id] ? (s.live[n.id].paused ? 'paused' : s.live[n.id].status) : 'stopped',
-      group: groups.find((g) => g.id === n.parentId)?.data.label,
+      group: ws.nodes.find((g) => g.type === 'group' && g.id === n.parentId)?.data.label,
       selected: !!n.selected,
     })),
-    groups: groups.map((g) => g.data.label),
+    groups: ws.nodes.filter((n) => n.type === 'group').map((g) => g.data.label),
     agents: s.installed,
   }
   const plan = await api.plan(command, board)
+  // Planning takes seconds: acting on whatever board is open by then would hit the wrong consoles.
+  const now = useStore.getState()
+  if (now.active !== where.active || workspace(now)?.id !== where.ws) return 'The board changed while planning, so nothing was done'
+  const groups = workspace(now)!.nodes.filter((n) => n.type === 'group')
   const byName = (names: string[]) => {
     const all = consoles(workspace(useStore.getState())!.nodes)
     const ids = new Set<string>()
@@ -39,7 +56,7 @@ export async function runPlanner(command: string): Promise<string> {
     }
     return [...ids]
   }
-  for (const a of plan.actions ?? []) {
+  for (const a of (plan.actions ?? []).filter(valid)) {
     const st = useStore.getState()
     if (a.type === 'send') st.sendTo(byName(a.to), a.text)
     else if (a.type === 'spawn') st.spawnMany(Array(Math.max(1, Math.min(12, a.count || 1))).fill(a.agent), a.group)

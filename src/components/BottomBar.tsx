@@ -294,15 +294,16 @@ function CommandBar() {
     let rest = raw
     const ids = new Set<string>()
     for (const t of sorted) {
-      const re = new RegExp(`@${t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
+      // Unicode-aware end of name: `\b` fails after "Niccolò", "Team (A)" or "C++".
+      const re = new RegExp(`@${t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'giu')
       if (re.test(rest)) {
         t.ids.forEach((id) => ids.add(id))
         rest = rest.replace(re, '').trim()
       }
     }
     if (ids.size) {
-      s.sendTo([...ids], rest)
-      say(`Sent to ${ids.size} console${ids.size > 1 ? 's' : ''}`)
+      const sent = s.sendTo([...ids], rest)
+      say(sent ? `Sent to ${sent} console${sent > 1 ? 's' : ''}` : 'None of those consoles is running')
     } else {
       setBusy(true)
       try {
@@ -318,7 +319,7 @@ function CommandBar() {
 
   const candidates = mention === null ? [] : targets.filter((t) => t.name.toLowerCase().startsWith(mention.toLowerCase())).slice(0, 8)
   const pickMention = (name: string) => {
-    setText((t) => t.replace(/@[\w ]*$/, `@${name} `))
+    setText((t) => t.replace(/@[^@\n]*$/, `@${name} `))
     setMention(null)
     inputRef.current?.focus()
   }
@@ -374,7 +375,7 @@ function CommandBar() {
           placeholder={busy ? 'Planning…' : 'Hold space to speak · @ to direct...'}
           onChange={(e) => {
             setText(e.target.value)
-            const m = e.target.value.slice(0, e.target.selectionStart ?? undefined).match(/@([\w ]*)$/)
+            const m = e.target.value.slice(0, e.target.selectionStart ?? undefined).match(/@([^@\n]*)$/)
             setMention(m ? m[1] : null)
           }}
           onKeyDown={(e) => {

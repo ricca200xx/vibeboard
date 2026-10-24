@@ -4,7 +4,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import pty from 'node-pty'
@@ -41,6 +41,7 @@ fs.writeFileSync(
         SessionStart: [{ hooks: [hook('SessionStart')] }],
         UserPromptSubmit: [{ hooks: [hook('UserPromptSubmit')] }],
         PreToolUse: [{ matcher: '*', hooks: [hook('PreToolUse')] }],
+        PostToolUse: [{ matcher: '*', hooks: [hook('PostToolUse')] }],
         Notification: [{ hooks: [hook('Notification')] }],
         Stop: [{ hooks: [hook('Stop')] }],
       },
@@ -52,11 +53,11 @@ fs.writeFileSync(
 
 // ---------- security: only our own pages may talk to us ----------
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`])
+// The Vite dev page only in development: in production another project on :5173 must not drive the consoles.
 const ALLOWED_ORIGINS = new Set([
   `http://127.0.0.1:${PORT}`,
   `http://localhost:${PORT}`,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
+  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5173', 'http://127.0.0.1:5173']),
 ])
 // Browsers always send Origin on cross-site WS/POST; curl (the hooks) sends none.
 // The Host check blocks DNS-rebinding pages that resolve to 127.0.0.1.
@@ -84,7 +85,8 @@ function setStatus(s, status) {
   loops.onStatus(s, status)
 }
 
-const shq = (v) => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`)
+// No `=` in the bare set: zsh expands a leading `=word` to a command path.
+const shq = (v) => (/^[\w@%+:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`)
 
 function commandFor(agent, { sessionId, resume, yolo }) {
   const parts = [agent.cmd]
@@ -102,7 +104,9 @@ function commandFor(agent, { sessionId, resume, yolo }) {
 function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo }) {
   const agent = agentById(agentId)
   if (!agent) throw new Error(`unknown agent ${agentId}`)
-  const dir = cwd && path.isAbsolute(cwd) && fs.existsSync(cwd) ? cwd : os.homedir()
+  // A project folder that has gone away must not quietly become $HOME (maybe in YOLO).
+  if (cwd && !isDir(cwd)) throw new Error(`folder not found: ${cwd}`)
+  const dir = cwd || os.homedir()
   // Agents run through a login+interactive shell so they see the same PATH as iTerm.
   const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { sessionId, resume, yolo })}`] : ['-l']
   const p = pty.spawn(SHELL, args, {
@@ -112,10 +116,12 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
     cwd: dir,
     env: { ...CLEAN_ENV, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null }
+  const s = { id, agent, cwd: dir, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0 }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     for (const c of s.clients) if (c.readyState === 1) c.send(d)
+    // A repaint after a resize is not activity: it would flip status and re-match output triggers.
+    if (Date.now() < s.quietUntil) return
     loops.onOutput(s, d)
     // Agents without hooks: status from output activity.
     if (!agent.hooks) {
@@ -127,6 +133,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
   p.onExit(({ exitCode }) => {
     clearTimeout(s.idleTimer)
     sessions.delete(id)
+    loops.onExit(s)
     for (const c of s.clients) c.close(4000, 'exit')
     broadcast({ type: 'exit', id, code: exitCode })
   })
@@ -135,35 +142,78 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
   return s
 }
 
-const signalGroup = (s, sig) => {
+// The agent's own process group plus every group its descendants live in: Claude's Bash tool
+// and the dev servers it starts sit in groups of their own, out of reach of `kill(-pid)`.
+function groupsOf(s, into = new Set()) {
+  into.add(s.pty.pid)
   try {
-    process.kill(-s.pty.pid, sig)
-  } catch {}
+    const kids = new Map()
+    for (const line of execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf8' }).split('\n')) {
+      const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number)
+      if (pid) kids.set(ppid, [...(kids.get(ppid) || []), { pid, pgid }])
+    }
+    const todo = [s.pty.pid]
+    while (todo.length) {
+      for (const k of kids.get(todo.pop()) || []) {
+        into.add(k.pgid)
+        todo.push(k.pid)
+      }
+    }
+  } catch (e) {
+    console.error('ps failed, signalling the agent group only:', e.message)
+  }
+  return into
 }
 
-// Claude Code ignores SIGHUP, so escalate on the whole group (its MCP servers included)
-// until the exit handler has removed the session.
+const signalGroups = (groups, sig) => {
+  for (const g of groups) {
+    try {
+      process.kill(-g, sig)
+    } catch {}
+  }
+}
+
+// Claude Code ignores SIGHUP, so escalate until the exit handler has removed the session.
+// Groups are collected up front: once the agent dies its children reparent to launchd.
 function kill(s) {
-  signalGroup(s, 'SIGCONT')
-  signalGroup(s, 'SIGHUP')
-  setTimeout(() => sessions.get(s.id) === s && signalGroup(s, 'SIGTERM'), 1500)
-  setTimeout(() => sessions.get(s.id) === s && signalGroup(s, 'SIGKILL'), 4000)
+  const groups = groupsOf(s)
+  signalGroups(groups, 'SIGCONT')
+  signalGroups(groups, 'SIGHUP')
+  setTimeout(() => sessions.get(s.id) === s && signalGroups(groupsOf(s, groups), 'SIGTERM'), 1500)
+  setTimeout(() => sessions.get(s.id) === s && signalGroups(groups, 'SIGKILL'), 4000)
 }
 
 function signal(s, sig) {
-  // Negative pid = whole process group, so tool subprocesses pause with the agent.
-  process.kill(-s.pty.pid, sig)
+  signalGroups(groupsOf(s), sig)
   s.paused = sig === 'SIGSTOP'
   broadcast({ type: 'paused', id: s.id, paused: s.paused })
 }
 
 const writeTo = (s, text) => s.pty.write(text)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Multi-line text goes in as a bracketed paste so each newline doesn't submit on its own;
-// the Enter follows after a beat, or the TUI folds it into the paste.
+// the Enter follows after a beat, or the TUI folds it into the paste. Prompts queue per
+// console: two writers inside that beat would otherwise fuse into one prompt.
 function sendPrompt(s, text) {
-  writeTo(s, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text)
-  setTimeout(() => writeTo(s, '\r'), 120)
+  s.queue = (s.queue || Promise.resolve()).then(async () => {
+    writeTo(s, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text)
+    await sleep(120)
+    writeTo(s, '\r')
+    await sleep(150)
+  })
+  return s.queue
+}
+
+const dim = (v, max, fallback) => {
+  const n = Number(v) | 0
+  return n > 1 ? Math.min(max, n) : fallback
+}
+
+function resize(s, cols, rows) {
+  if (sessions.get(s.id) !== s) return // node-pty's resize throws on a dead pty
+  s.quietUntil = Date.now() + 1000
+  s.pty.resize(cols, rows)
 }
 
 const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
@@ -180,11 +230,37 @@ function runCommand(cmd, args, opts = {}) {
 let installed = null
 async function detectAgents() {
   const cmds = AGENTS.filter((a) => a.cmd).map((a) => a.cmd)
-  const script = `for c in ${cmds.join(' ')}; do command -v $c >/dev/null 2>&1 && echo $c; done`
-  const { stdout } = await runCommand(SHELL, ['-lic', script], { timeout: 10000 })
+  const script = `for c in ${cmds.join(' ')}; do command -v $c >/dev/null 2>&1 && echo $c; done; true`
+  const { code, stdout } = await runCommand(SHELL, ['-lic', script], { timeout: 10000 })
   const found = new Set(stdout.split('\n').map((l) => l.trim()))
-  installed = AGENTS.filter((a) => !a.cmd || found.has(a.cmd)).map((a) => a.id)
-  return installed
+  const ids = AGENTS.filter((a) => !a.cmd || found.has(a.cmd)).map((a) => a.id)
+  if (code === 0) installed = ids // a slow .zshrc that timed out gets another try next time
+  return ids
+}
+
+// `claude -p --output-format json` ends with one JSON line; anything before it is shell-rc noise.
+async function askClaude(model, prompt, opts) {
+  const r = await runCommand(SHELL, ['-lic', `claude -p --model ${model} --output-format json ${shq(prompt)}`], opts)
+  let out
+  try {
+    out = JSON.parse(r.stdout.trim().split('\n').pop())
+  } catch {
+    throw new Error(r.code === 0 ? 'claude gave no reply' : `claude exited with ${r.code}`)
+  }
+  if (out.is_error || typeof out.result !== 'string') throw new Error(`claude failed: ${String(out.result ?? out.subtype).slice(0, 200)}`)
+  return out.result
+}
+
+// The model may wrap its JSON in prose or a ```json fence.
+function parseJSON(text) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  for (const candidate of [text, fenced?.[1], text.slice(text.search(/[[{]/))]) {
+    if (!candidate) continue
+    try {
+      return JSON.parse(candidate.trim())
+    } catch {}
+  }
+  throw new Error('no JSON in agent reply')
 }
 detectAgents()
 
@@ -254,12 +330,18 @@ async function usageStats() {
       let entry = usageCache.get(file)
       if (entry?.key !== key) {
         const perFile = {}
+        const seen = new Set() // one line per content block, all carrying the same message usage
         for (const line of (await fs.promises.readFile(file, 'utf8')).split('\n')) {
           if (!line.includes('"usage"')) continue
           try {
             const e = JSON.parse(line)
             const u = e.message?.usage
             if (!u || !e.timestamp) continue
+            const mid = e.message.id || e.requestId
+            if (mid) {
+              if (seen.has(mid)) continue
+              seen.add(mid)
+            }
             const day = e.timestamp.slice(0, 10)
             perFile[day] = (perFile[day] || 0) + (u.input_tokens || 0) + (u.output_tokens || 0)
           } catch {}
@@ -278,24 +360,26 @@ async function usageStats() {
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.json': 'application/json' }
 
-function serveStatic(req, res) {
+function serveStatic(url, res) {
   const dist = path.join(ROOT, 'dist')
-  const url = new URL(req.url, 'http://x')
   let file = path.normalize(path.join(dist, decodeURIComponent(url.pathname)))
   if (file !== dist && !file.startsWith(dist + path.sep)) return json(res, 403, { error: 'forbidden' })
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dist, 'index.html')
   if (!fs.existsSync(file)) return json(res, 404, { error: 'run npm run build first' })
   res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' })
-  fs.createReadStream(file).pipe(res)
+  // The file can vanish between the check and the open while `npm run build` rewrites dist.
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res)
 }
 
 // ---------- HTTP API ----------
 const server = http.createServer(async (req, res) => {
   if (!isAllowed(req)) return json(res, 403, { error: 'forbidden' })
-  const url = new URL(req.url, 'http://x')
-  const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
-  if (parts[0] !== 'api') return serveStatic(req, res)
+  // Everything below runs inside the try: a malformed URL from any page (`/%`, `//`) must cost
+  // one 400/500, not the process and every console it owns.
   try {
+    const url = new URL(req.url, 'http://x')
+    const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
+    if (parts[0] !== 'api') return serveStatic(url, res)
     const [, route, id, action] = parts
     if (route === 'state' && req.method === 'GET') {
       return json(res, 200, fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {})
@@ -310,14 +394,17 @@ const server = http.createServer(async (req, res) => {
     if (route === 'sessions') return json(res, 200, [...sessions.values()].map(summary))
     if (route === 'agents') return json(res, 200, installed ?? (await detectAgents()))
     if (route === 'hook' && req.method === 'POST') {
-      const s = sessions.get(id)
       const payload = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
+      const s = sessions.get(id) // after the body: the console may have exited meanwhile
       if (s) {
-        if (action === 'UserPromptSubmit' || action === 'PreToolUse') setStatus(s, 'working')
+        const idlePrompt = payload.notification_type === 'idle_prompt' || /waiting for your input/i.test(payload.message || '')
+        if (action === 'UserPromptSubmit' || action === 'PreToolUse' || action === 'PostToolUse') setStatus(s, 'working')
         else if (action === 'Stop') setStatus(s, 'done')
-        else if (action === 'SessionStart') setStatus(s, 'idle')
-        else if (action === 'Notification' && payload.notification_type !== 'idle_prompt' && !/waiting for your input/i.test(payload.message || ''))
-          setStatus(s, 'needs')
+        // Auto-compact restarts the session mid-turn: the agent is still working.
+        else if (action === 'SessionStart' && payload.source !== 'compact') setStatus(s, 'idle')
+        else if (action === 'Notification' && !idlePrompt) setStatus(s, 'needs')
+        // Esc interrupts fire no Stop; the 60s idle notice is what unsticks "working".
+        else if (action === 'Notification' && s.status === 'working') setStatus(s, 'idle')
         // `prompted` marks a conversation worth resuming: it has at least one prompt on disk.
         if (payload.session_id) broadcast({ type: 'session-id', id: s.id, sessionId: payload.session_id, prompted: action === 'UserPromptSubmit' })
       }
@@ -332,9 +419,13 @@ const server = http.createServer(async (req, res) => {
       }
       const body = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
       if (action === 'input') {
-        if (body.prompt) sendPrompt(s, String(body.prompt))
-        else writeTo(s, String(body.data ?? ''))
-        if (s.status === 'done') setStatus(s, 'idle')
+        if (body.prompt) {
+          sendPrompt(s, String(body.prompt))
+          setStatus(s, 'working') // not idle: that would let an idle loop type over this prompt
+        } else {
+          writeTo(s, String(body.data ?? ''))
+          if (s.status === 'done') setStatus(s, 'idle')
+        }
         return json(res, 200, { ok: true })
       }
       if (action === 'signal' && (body.signal === 'SIGSTOP' || body.signal === 'SIGCONT')) {
@@ -361,7 +452,8 @@ const server = http.createServer(async (req, res) => {
     if (route === 'reveal' && req.method === 'POST') {
       const { cwd } = JSON.parse(await readBody(req, 64 * 1024))
       if (!isDir(cwd)) return json(res, 400, { error: 'not a directory' })
-      await runCommand('open', [cwd])
+      // `open X.app` launches the app; a folder with an extension may be a bundle, so reveal it instead.
+      await runCommand('open', path.extname(cwd) ? ['-R', cwd] : [cwd])
       return json(res, 200, { ok: true })
     }
     if (route === 'scan' && req.method === 'POST') {
@@ -370,10 +462,14 @@ const server = http.createServer(async (req, res) => {
       const prompt =
         'Read this repository and write the facts a coding agent must know before working here. ' +
         'Reply with ONLY a JSON array, no prose, of 4 to 10 objects {"kind": one of "Structure","Commands","Conventions","Gotchas", "title": short, "text": 1-3 sentences}.'
-      const r = await runCommand(SHELL, ['-lic', `claude -p --model sonnet ${shq(prompt)}`], { cwd, timeout: 240_000 })
-      const match = r.stdout.match(/\[[\s\S]*\]/)
-      if (!match) return json(res, 502, { error: 'no JSON in agent reply' })
-      return json(res, 200, JSON.parse(match[0]))
+      try {
+        const facts = parseJSON(await askClaude('sonnet', prompt, { cwd, timeout: 240_000 }))
+        if (!Array.isArray(facts) || !facts.every((f) => f && typeof f.title === 'string' && typeof f.text === 'string'))
+          throw new Error('scan reply has the wrong shape')
+        return json(res, 200, facts)
+      } catch (e) {
+        return json(res, 502, { error: e.message })
+      }
     }
     if (route === 'plan' && req.method === 'POST') {
       const { command, board } = JSON.parse(await readBody(req, 512 * 1024))
@@ -390,22 +486,33 @@ const server = http.createServer(async (req, res) => {
         '{"type":"pause"}  {"type":"resume"}',
         'There is no action to stop or delete a console: if asked, say it needs the close button. If the command is unclear, return no actions and ask in "reply".',
       ].join('\n')
-      const r = await runCommand(SHELL, ['-lic', `claude -p --model haiku ${shq(prompt)}`], { cwd: os.homedir(), timeout: 120_000 })
-      const match = r.stdout.match(/\{[\s\S]*\}/)
-      if (!match) return json(res, 502, { error: 'planner gave no JSON' })
-      return json(res, 200, JSON.parse(match[0]))
+      try {
+        const plan = parseJSON(await askClaude('haiku', prompt, { cwd: os.homedir(), timeout: 120_000 }))
+        if (!plan || typeof plan.reply !== 'string' || !Array.isArray(plan.actions)) throw new Error('planner reply has the wrong shape')
+        return json(res, 200, plan)
+      } catch (e) {
+        return json(res, 502, { error: e.message })
+      }
     }
     if (route === 'git') return json(res, 200, await gitInfo(url.searchParams.get('cwd')))
     if (route === 'usage') return json(res, 200, await usageStats())
     if (route === 'loops') {
       if (req.method === 'GET') return json(res, 200, loops.list())
-      if (req.method === 'POST') return json(res, 200, loops.add(JSON.parse(await readBody(req, 1024 * 1024))))
+      if (req.method === 'POST') {
+        const input = JSON.parse(await readBody(req, 1024 * 1024))
+        try {
+          return json(res, 200, loops.add(input))
+        } catch (e) {
+          return json(res, 400, { error: e.message })
+        }
+      }
       if (req.method === 'DELETE' && id) return json(res, 200, loops.remove(id))
     }
     return json(res, 404, { error: 'not found' })
   } catch (e) {
     console.error(e)
-    return json(res, 500, { error: 'server error' })
+    if (res.headersSent) return res.destroy()
+    return json(res, e instanceof URIError ? 400 : 500, { error: e instanceof URIError ? 'bad url' : 'server error' })
   }
 })
 
@@ -414,13 +521,27 @@ const wss = new WebSocketServer({ noServer: true })
 
 server.on('upgrade', (req, socket, head) => {
   if (!isAllowed(req)) return socket.destroy()
+  socket.on('error', () => socket.destroy())
   wss.handleUpgrade(req, socket, head, (ws) => {
-    const url = new URL(req.url, 'http://x')
+    // A broken frame emits 'error'; without a listener that throws and takes the server down.
+    ws.on('error', () => ws.terminate())
+    let url
+    try {
+      url = new URL(req.url, 'http://x')
+    } catch {
+      return ws.close()
+    }
     if (url.pathname === '/ws/events') return attachEvents(ws)
     if (url.pathname === '/ws/pty') return attachPty(ws, url.searchParams)
     ws.close()
   })
 })
+
+// Terminal queries (device attributes, cursor and status reports, colour and mode queries) in a
+// replayed buffer would be answered again by the fresh xterm, and the answers would reach the
+// agent as keystrokes long after it asked.
+const QUERIES =
+  /\x1b\[[>=]?0?c|\x1b\[\??[0-9]*n|\x1b\[>[0-9]*q|\x1b\[\?u|\x1b\[\??[0-9;]*\$p|\x1b\[1[468]t|\x1bP\$q[^\x1b]*\x1b\\|\x1b\](?:1[0-2]|4;[0-9]+);\?(?:\x07|\x1b\\)/g
 
 function attachEvents(ws) {
   eventClients.add(ws)
@@ -432,8 +553,8 @@ function attachEvents(ws) {
 function attachPty(ws, q) {
   const id = q.get('id')
   if (!id || !/^[\w-]{1,64}$/.test(id)) return ws.close()
-  const cols = Number(q.get('cols')) || 100
-  const rows = Number(q.get('rows')) || 30
+  const cols = dim(q.get('cols'), 500, 100)
+  const rows = dim(q.get('rows'), 300, 30)
   let s = sessions.get(id)
   if (!s) {
     try {
@@ -452,24 +573,29 @@ function attachPty(ws, q) {
       return ws.close()
     }
   } else if (s.buf) {
-    ws.send(s.buf)
+    ws.send(s.buf.replace(QUERIES, ''))
   }
   s.clients.add(ws)
   // Nudge full-screen TUIs to repaint for the freshly attached view.
-  s.pty.resize(cols, Math.max(2, rows - 1))
-  s.pty.resize(cols, rows)
+  resize(s, cols, Math.max(2, rows - 1))
+  resize(s, cols, rows)
   ws.on('message', (raw) => {
+    if (sessions.get(s.id) !== s) return // a message that arrives after the exit
     let m
     try {
       m = JSON.parse(String(raw))
     } catch {
       return
     }
+    if (!m || typeof m !== 'object') return
     if (m.t === 'i' && typeof m.d === 'string') {
       s.pty.write(m.d)
+      s.lastInputAt = Date.now()
       if (s.status === 'done') setStatus(s, 'idle')
-    } else if (m.t === 'r' && m.cols > 1 && m.rows > 1) {
-      s.pty.resize(Math.min(500, m.cols | 0), Math.min(300, m.rows | 0))
+    } else if (m.t === 'r') {
+      const c = dim(m.cols, 500, 0)
+      const r = dim(m.rows, 300, 0)
+      if (c && r) resize(s, c, r)
     }
   })
   ws.on('close', () => s.clients.delete(ws))
@@ -477,15 +603,33 @@ function attachPty(ws, q) {
 
 server.listen(PORT, '127.0.0.1', () => console.log(`vibeboard server on http://127.0.0.1:${PORT}`))
 
+// Give agents up to 3s to close their own tool shells, then kill whatever is left,
+// so no console outlives the server that owns its PTY.
+let stopping = false
 const shutdown = () => {
-  for (const s of sessions.values()) {
-    signalGroup(s, 'SIGCONT')
-    signalGroup(s, 'SIGTERM')
-  }
-  setTimeout(() => {
-    for (const s of sessions.values()) signalGroup(s, 'SIGKILL')
+  if (stopping) return
+  stopping = true
+  const groups = new Set()
+  for (const s of sessions.values()) groupsOf(s, groups)
+  signalGroups(groups, 'SIGCONT')
+  signalGroups(groups, 'SIGHUP')
+  signalGroups(groups, 'SIGTERM')
+  const t0 = Date.now()
+  const tick = setInterval(() => {
+    if (sessions.size && Date.now() - t0 < 3000) return
+    clearInterval(tick)
+    signalGroups(groups, 'SIGKILL')
     process.exit(0)
-  }, 1200)
+  }, 100)
 }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
+// Last resort: an unexpected throw still takes the consoles down with us instead of orphaning them.
+process.on('uncaughtException', (e) => {
+  console.error('fatal:', e)
+  shutdown()
+})
+process.on('unhandledRejection', (e) => {
+  console.error('fatal:', e)
+  shutdown()
+})

@@ -79,6 +79,13 @@ export function MissionMap() {
 
   const selectedTeam = sel?.kind === 'team' ? teams.find((t) => t.id === sel.id) : !sel ? teams[0] : undefined
   const selectedConsole = sel?.kind === 'console' ? all.find((n) => n.id === sel.id) : undefined
+  // The prompt stays in the field when the console isn't running, so nothing typed is lost.
+  const send = () => {
+    if (!selectedConsole) return
+    const s = useStore.getState()
+    if (!s.sendTo([selectedConsole.id], prompt.trim())) return s.notify(`${selectedConsole.data.name} is not running`)
+    setPrompt('')
+  }
   const working = counts.working
 
   return (
@@ -246,19 +253,12 @@ export function MissionMap() {
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && prompt.trim()) {
-                        useStore.getState().sendTo([selectedConsole.id], prompt.trim())
-                        setPrompt('')
-                      }
+                      if (e.key === 'Enter' && prompt.trim()) send()
                     }}
                   />
                   <button
                     className="btn"
-                    onClick={() => {
-                      if (!prompt.trim()) return
-                      useStore.getState().sendTo([selectedConsole.id], prompt.trim())
-                      setPrompt('')
-                    }}
+                    onClick={() => prompt.trim() && send()}
                   >
                     <Send size={14} />
                   </button>

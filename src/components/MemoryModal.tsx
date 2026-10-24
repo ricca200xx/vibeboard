@@ -27,8 +27,9 @@ export function MemoryModal() {
   const push = (items: Memory[]) => {
     const ids = targets()
     if (!items.length || !ids.length) return s.notify('Nothing to push')
-    s.sendTo(ids, asPrompt(items))
-    s.notify(`Pushed ${items.length} memor${items.length > 1 ? 'ies' : 'y'} to ${ids.length} console${ids.length > 1 ? 's' : ''}`)
+    const sent = s.sendTo(ids, asPrompt(items))
+    if (!sent) return s.notify('None of those consoles is running')
+    s.notify(`Pushed ${items.length} memor${items.length > 1 ? 'ies' : 'y'} to ${sent} console${sent > 1 ? 's' : ''}`)
   }
   const scan = async () => {
     setScanning(true)

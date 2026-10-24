@@ -102,7 +102,7 @@ type S = {
   updateData: (id: string, patch: Record<string, unknown>) => void
   removeNode: (id: string) => Promise<void>
   addConsole: (agent: string, center: { x: number; y: number }, extra?: Partial<ConsoleData>, parentId?: string, reveal?: boolean) => string
-  restartConsole: (id: string) => Promise<void>
+  restartConsole: (id: string, fresh?: boolean) => Promise<void>
   resumeConsole: (id: string) => Promise<void>
   duplicateConsole: (id: string) => void
   spawnMany: (agents: string[], label?: string) => void
@@ -110,7 +110,7 @@ type S = {
   ungroup: (id: string) => void
   pauseAll: () => void
   resumeAll: () => void
-  sendTo: (ids: string[], text: string) => void
+  sendTo: (ids: string[], text: string) => number
   frame: (ids: string[]) => void
   viewCenter: () => { x: number; y: number }
   savePreset: (preset: Omit<Preset, 'id'>) => void
@@ -157,10 +157,11 @@ export function freeSpot(nodes: Node[], rect: { x: number; y: number; width: num
   return { x, y: rect.y }
 }
 
-function waitGone(id: string, ms = 3000) {
-  return new Promise<void>((resolve) => {
+// Resolves true once the process is gone. The server escalates to SIGKILL at 4s, so 5s is enough.
+function waitGone(id: string, ms = 5000) {
+  return new Promise<boolean>((resolve) => {
     const t0 = Date.now()
-    const tick = () => (!useStore.getState().live[id] || Date.now() - t0 > ms ? resolve() : setTimeout(tick, 50))
+    const tick = () => (!useStore.getState().live[id] ? resolve(true) : Date.now() - t0 > ms ? resolve(false) : setTimeout(tick, 50))
     tick()
   })
 }
@@ -201,11 +202,17 @@ export const useStore = create<S>((set, get) => {
     inkColor: '#e8643c',
 
     init: () => {
-      api.getState().then((saved) => {
-        set({ ...(saved as Partial<S>), loaded: true })
-        set((s) => ({ ready: s.liveReady }))
-      })
-      api.agents().then((installed) => set({ installed }))
+      // Retried: under `node --watch` the page can load while the server is restarting.
+      const load = () =>
+        api
+          .getState()
+          .then((saved) => {
+            set({ ...(saved as Partial<S>), loaded: true })
+            set((s) => ({ ready: s.liveReady }))
+          })
+          .catch(() => setTimeout(load, 1000))
+      load()
+      api.agents().then((installed) => set({ installed })).catch((e) => console.error('agent detection failed', e))
       connectEvents((e) => {
         if (e.type === 'sessions') {
           const live = Object.fromEntries(e.sessions.map((x) => [x.id, x]))
@@ -229,20 +236,21 @@ export const useStore = create<S>((set, get) => {
           })
         } else if (e.type === 'session-id') {
           // Claude rotates the session id on /clear; keep the newest so resume picks the right chat.
-          set((s) => ({
-            projects: s.projects.map((p) => ({
-              ...p,
-              workspaces: p.workspaces.map((w) => ({
-                ...w,
-                nodes: w.nodes.map((n) => {
-                  if (n.id !== e.id) return n
-                  const d = n.data as ConsoleData
-                  if (d.sessionId === e.sessionId && (!e.prompted || d.resumable === e.sessionId)) return n
-                  return { ...n, data: { ...d, sessionId: e.sessionId, ...(e.prompted ? { resumable: e.sessionId } : {}) } }
-                }),
+          // This fires on every tool call, so an unchanged node returns the same state (no re-render, no save).
+          set((s) => {
+            const d = s.projects.flatMap((p) => p.workspaces.flatMap((w) => w.nodes)).find((n) => n.id === e.id)?.data as ConsoleData | undefined
+            if (!d || (d.sessionId === e.sessionId && (!e.prompted || (d.resumable === e.sessionId && !d.resumeOffer)))) return s
+            // A prompt reached the new conversation (keyboard, command bar, loop...): the old one is no longer on offer.
+            const patch = { sessionId: e.sessionId, ...(e.prompted ? { resumable: e.sessionId, resumeOffer: false } : {}) }
+            return {
+              projects: s.projects.map((p) => ({
+                ...p,
+                workspaces: p.workspaces.map((w) =>
+                  w.nodes.some((n) => n.id === e.id) ? { ...w, nodes: w.nodes.map((n) => (n.id === e.id ? { ...n, data: { ...n.data, ...patch } } : n)) } : w,
+                ),
               })),
-            })),
-          }))
+            }
+          })
         } else if (e.type === 'loops') set({ loops: e.loops })
       })
     },
@@ -362,17 +370,19 @@ export const useStore = create<S>((set, get) => {
       return id
     },
 
-    restartConsole: async (id) => {
+    // fresh: an explicit restart starts clean; Relaunch after an exit keeps the conversation on offer.
+    restartConsole: async (id, fresh = true) => {
       if (get().live[id]) await api.kill(id).catch(() => {})
-      await waitGone(id)
+      if (!(await waitGone(id))) return get().notify('Still stopping, try again in a moment')
       const n = workspace(get())?.nodes.find((x) => x.id === id) as Node<ConsoleData> | undefined
-      if (n) get().updateData(id, { epoch: n.data.epoch + 1, sessionId: undefined, resumeOffer: false, resumeNext: false })
+      if (n)
+        get().updateData(id, { epoch: n.data.epoch + 1, sessionId: undefined, resumeOffer: false, resumeNext: false, ...(fresh ? { resumable: undefined } : {}) })
     },
 
     // Relaunch the console on its previous conversation (the CLI's own --resume).
     resumeConsole: async (id) => {
       if (get().live[id]) await api.kill(id).catch(() => {})
-      await waitGone(id)
+      if (!(await waitGone(id))) return get().notify('Still stopping, try again in a moment')
       const n = workspace(get())?.nodes.find((x) => x.id === id) as Node<ConsoleData> | undefined
       if (n?.data.lastSessionId) get().updateData(id, { epoch: n.data.epoch + 1, resumeNext: true, resumeOffer: false })
     },
@@ -492,7 +502,12 @@ export const useStore = create<S>((set, get) => {
       get().notify(ids.length ? `Resumed ${ids.length} console${ids.length > 1 ? 's' : ''}` : 'Nothing paused')
     },
 
-    sendTo: (ids, text) => ids.forEach((id) => get().live[id] && api.prompt(id, text).catch(() => {})),
+    // Returns how many consoles were actually running, so callers report the real count.
+    sendTo: (ids, text) => {
+      const live = ids.filter((id) => get().live[id])
+      live.forEach((id) => api.prompt(id, text).catch((e) => get().notify(`Send failed: ${e.message}`)))
+      return live.length
+    },
 
     frame: (ids) => get().flow?.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.15, duration: 450, maxZoom: 1 }),
 
@@ -505,19 +520,48 @@ export const useStore = create<S>((set, get) => {
 })
 
 // ---------- persistence ----------
+const snapshot = () => {
+  const { projects, active, settings, presets } = useStore.getState()
+  const clean = projects.map((p) => ({
+    ...p,
+    workspaces: p.workspaces.map((w) => ({ ...w, nodes: w.nodes.map(({ selected: _s, dragging: _d, ...n }) => n) })),
+  }))
+  return { projects: clean, active, settings, presets }
+}
+
+// One PUT in flight at a time: two racing uploads could land an older state last.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+let saving = false
+let dirty = false
+async function save() {
+  saveTimer = undefined
+  if (saving) return void (dirty = true)
+  saving = true
+  try {
+    await api.putState(snapshot())
+  } catch (e) {
+    useStore.getState().notify(`Save failed: ${(e as Error).message}`)
+  } finally {
+    saving = false
+    if (dirty) {
+      dirty = false
+      save()
+    }
+  }
+}
+
 useStore.subscribe((s, prev) => {
   if (!s.loaded) return
   if (s.projects === prev.projects && s.active === prev.active && s.settings === prev.settings && s.presets === prev.presets) return
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const { projects, active, settings, presets } = useStore.getState()
-    const clean = projects.map((p) => ({
-      ...p,
-      workspaces: p.workspaces.map((w) => ({ ...w, nodes: w.nodes.map(({ selected: _s, dragging: _d, ...n }) => n) })),
-    }))
-    api.putState({ projects: clean, active, settings, presets }).catch((e) => console.error('save failed', e))
-  }, 400)
+  saveTimer = setTimeout(save, 400)
+})
+
+// Edits from the last 400ms before a reload. Best effort: keepalive bodies are capped at 64KB.
+addEventListener('pagehide', () => {
+  if (!saveTimer) return
+  clearTimeout(saveTimer)
+  fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
 })
 
 export const agentColor = (id: string) => agentById(id)?.color ?? '#9a948c'

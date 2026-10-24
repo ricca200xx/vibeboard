@@ -95,7 +95,18 @@ function addImage(file: File, at: { x: number; y: number }) {
       const scale = Math.min(1, 480 / Math.max(img.width, img.height))
       const width = Math.round(img.width * scale)
       const height = Math.round(img.height * scale)
-      useStore.getState().addNode({ id: nid('i'), type: 'image', position: { x: at.x - width / 2, y: at.y - height / 2 }, style: { width, height }, data: { src: reader.result } })
+      // The whole board is saved on every change: store the picture at 2x its shown size, not the
+      // camera original, or a few photos push the state past the server's body limit.
+      let src = String(reader.result)
+      const store = Math.min(1, 960 / Math.max(img.width, img.height))
+      if (file.type !== 'image/svg+xml' && store < 1) {
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(img.width * store)
+        canvas.height = Math.round(img.height * store)
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+        src = canvas.toDataURL('image/webp', 0.85)
+      }
+      useStore.getState().addNode({ id: nid('i'), type: 'image', position: { x: at.x - width / 2, y: at.y - height / 2 }, style: { width, height }, data: { src } })
     }
     img.src = String(reader.result)
   }
@@ -144,20 +155,25 @@ function Board() {
     set({ tool: 'select' })
   }
 
-  // Dropping a node inside a group adopts it; dragging it out releases it.
-  const onDragStop = (_: unknown, node: Node) => {
-    if (node.type === 'group') return
-    const s = useStore.getState()
-    const nodes = workspace(s)!.nodes
-    const abs = absolute(nodes, node)
-    const w = node.measured?.width ?? 0
-    const h = node.measured?.height ?? 0
-    const cx = abs.x + w / 2
-    const cy = abs.y + h / 2
-    const host = nodes.find(
-      (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
-    )
-    if (host?.id === node.parentId) return
+  // Dropping a node inside a group adopts it; dragging it out releases it. With a multi-selection
+  // every dragged node is judged on its own position, not only the one under the pointer.
+  const onDragStop = (_: unknown, _node: Node, dragged: Node[]) => {
+    const nodes = workspace(useStore.getState())!.nodes
+    const moves = new Map<string, Node>()
+    for (const node of dragged) {
+      if (node.type === 'group') continue
+      const abs = absolute(nodes, node)
+      const cx = abs.x + (node.measured?.width ?? 0) / 2
+      const cy = abs.y + (node.measured?.height ?? 0) / 2
+      const host = nodes.find(
+        (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
+      )
+      if (host?.id === node.parentId) continue
+      const moved = { ...nodes.find((n) => n.id === node.id)!, parentId: host?.id, position: host ? { x: abs.x - host.position.x, y: abs.y - host.position.y } : abs }
+      if (!host) delete moved.parentId
+      moves.set(node.id, moved)
+    }
+    if (!moves.size) return
     // Moved to the end of the array: React Flow needs parents before children.
     useStore.setState((st) => ({
       projects: st.projects.map((p) =>
@@ -165,13 +181,9 @@ function Board() {
           ? p
           : {
               ...p,
-              workspaces: p.workspaces.map((wsp) => {
-                if (wsp.id !== p.activeWs) return wsp
-                const rest = wsp.nodes.filter((n) => n.id !== node.id)
-                const moved = { ...wsp.nodes.find((n) => n.id === node.id)!, parentId: host?.id, position: host ? { x: abs.x - host.position.x, y: abs.y - host.position.y } : abs }
-                if (!host) delete moved.parentId
-                return { ...wsp, nodes: [...rest, moved] }
-              }),
+              workspaces: p.workspaces.map((wsp) =>
+                wsp.id !== p.activeWs ? wsp : { ...wsp, nodes: [...wsp.nodes.filter((n) => !moves.has(n.id)), ...moves.values()] },
+              ),
             },
       ),
     }))

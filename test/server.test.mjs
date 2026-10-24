@@ -7,8 +7,10 @@ import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
 
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PORT = 4399
 const BASE = `http://127.0.0.1:${PORT}`
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'vibeboard-test-'))
@@ -37,7 +39,7 @@ const tail = async (id) => (await (await api('POST', `/api/pty/${id}/tail`, { ch
 before(async () => {
   // Pretend the server was launched from inside a Claude Code session.
   const env = { ...process.env, PORT: String(PORT), HOME, CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1' }
-  server = spawn(process.execPath, ['server/index.mjs'], { env, stdio: 'ignore' })
+  server = spawn(process.execPath, [path.join(ROOT, 'server/index.mjs')], { env, stdio: 'ignore' })
   assert.ok(await until(async () => (await fetch(BASE + '/api/sessions').catch(() => null))?.ok), 'server did not start')
 })
 
@@ -53,7 +55,55 @@ test('rejects foreign origins and hosts', async () => {
   assert.ok(err)
 })
 
-test('serves the built app and refuses path traversal', { skip: !fs.existsSync('dist/index.html') && 'run npm run build first' }, async () => {
+test('malformed URLs and hostile WebSocket messages do not take the server down', async () => {
+  const get = (p) => new Promise((resolve) => http.get({ host: '127.0.0.1', port: PORT, path: p }, (res) => resolve(res.statusCode)).on('error', () => resolve(0)))
+  assert.equal(await get('/%'), 400)
+  assert.ok((await get('//')) >= 400)
+  const ws = await openShell('t-hostile')
+  await sleep(500)
+  ws.send('null')
+  ws.send('[1]')
+  ws.send(JSON.stringify({ t: 'r', cols: -5, rows: 'x' }))
+  // Re-attach to the live session with nonsense dimensions.
+  const again = new WebSocket(`ws://127.0.0.1:${PORT}/ws/pty?id=t-hostile&agent=shell&cols=-5&rows=0`, { origin: 'http://localhost:5173' })
+  await new Promise((r) => again.on('open', r))
+  await sleep(300)
+  assert.ok((await sessions()).some((s) => s.id === 't-hostile'), 'server died or lost the console')
+  await api('DELETE', '/api/pty/t-hostile')
+  ws.close()
+  again.close()
+})
+
+test('a console for a folder that is gone is refused, not opened in $HOME', { timeout: 5000 }, async () => {
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws/pty?id=t-gone&agent=shell&cwd=${encodeURIComponent(path.join(HOME, 'no-such-dir'))}`, { origin: 'http://localhost:5173' })
+  let text = ''
+  ws.on('message', (d) => (text += d))
+  await new Promise((r) => ws.on('close', r))
+  assert.match(text, /folder not found/)
+  assert.ok(!(await sessions()).some((s) => s.id === 't-gone'))
+})
+
+test('prompts sent back to back reach the console as separate prompts', async () => {
+  const ws = await openShell('t-queue')
+  await sleep(800)
+  await Promise.all([api('POST', '/api/pty/t-queue/input', { prompt: 'echo QA_$((1+1))' }), api('POST', '/api/pty/t-queue/input', { prompt: 'echo QB_$((2+2))' })])
+  assert.ok(await until(async () => /QA_2\s[\s\S]*QB_4/.test(await tail('t-queue'))), 'both prompts should run')
+  assert.ok(!(await tail('t-queue')).includes('QA_2echo'), 'prompts fused into one line')
+  await api('DELETE', '/api/pty/t-queue')
+  ws.close()
+})
+
+test('loop input is validated', async () => {
+  const bad = [
+    { instruction: 'x', trigger: { type: 'idle' }, target: { ids: [] } }, // empty pick must not mean "everyone"
+    { instruction: 'x', trigger: { type: 'schedule', everyMs: null } },
+    { instruction: 'x', trigger: { type: 'output', pattern: '(' } },
+    { instruction: 'fix the failed tests', trigger: { type: 'output', pattern: 'failed' } }, // would re-fire on its own echo
+  ]
+  for (const loop of bad) assert.equal((await api('POST', '/api/loops', loop)).status, 400, JSON.stringify(loop))
+})
+
+test('serves the built app and refuses path traversal', { skip: !fs.existsSync(path.join(ROOT, 'dist/index.html')) && 'run npm run build first' }, async () => {
   assert.match(await (await fetch(BASE + '/')).text(), /<div id="root">/)
   assert.match(await (await fetch(BASE + '/some/client/route')).text(), /<div id="root">/, 'SPA fallback')
   // A plain ".." is normalised by the URL parser; "..%2f" survives it and only becomes "../" once decoded.
@@ -78,7 +128,12 @@ test('shell console runs commands and hooks drive status', async () => {
   assert.ok(await until(async () => (await tail('t-shell')).includes('VB_42_[]')), 'echo output missing or Claude session env leaked into the console')
 
   const status = async () => (await sessions()).find((s) => s.id === 't-shell')?.status
+  await sleep(2700) // let the shell's own output-activity timer settle first
   await api('POST', '/api/hook/t-shell/UserPromptSubmit', {})
+  await api('POST', '/api/hook/t-shell/SessionStart', { source: 'compact' })
+  assert.equal(await status(), 'working', 'auto-compact happens mid-turn: still working')
+  await api('POST', '/api/hook/t-shell/Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' })
+  assert.equal(await status(), 'idle', 'the idle notice unsticks a working console after an Esc interrupt')
   // Shell has no hooks of its own; activity may flip it, so only check the hook-driven transitions.
   await api('POST', '/api/hook/t-shell/Notification', { notification_type: 'permission_prompt', message: 'needs permission' })
   assert.equal(await status(), 'needs')
@@ -110,6 +165,8 @@ test('idle loop fires once and retires at its run limit', async () => {
   const l = loops.find((x) => x.id === loop.id)
   assert.equal(l.active, false)
   assert.equal(l.finishedReason, 'run limit')
+  // An in-flight flag on disk would freeze the loop forever after a restart.
+  assert.ok(!fs.readFileSync(path.join(HOME, '.vibeboard', 'loops.json'), 'utf8').includes('"firing"'), 'runtime state persisted')
   await api('DELETE', `/api/loops/${loop.id}`)
   await api('DELETE', '/api/pty/t-loop')
   ws.close()
@@ -124,7 +181,9 @@ test('an "all consoles" loop stays inside its own project', async () => {
   mine.send(JSON.stringify({ t: 'i', d: 'echo poke\r' }))
   theirs.send(JSON.stringify({ t: 'i', d: 'echo poke\r' }))
   assert.ok(await until(async () => (await tail('t-mine')).includes('SCOPED_FIRE'), 10000), 'loop never reached its own project')
-  await sleep(1500)
+  // The console goes idle again inside the 10s cooldown: that trigger must be deferred, not dropped.
+  const finished = async () => (await (await api('GET', '/api/loops')).json()).find((x) => x.id === loop.id)?.finishedReason === 'run limit'
+  assert.ok(await until(finished, 16000), 'second run never came: trigger inside the cooldown was dropped')
   assert.ok(!(await tail('t-theirs')).includes('SCOPED_FIRE'), 'loop leaked into another project')
   await api('DELETE', `/api/loops/${loop.id}`)
   await api('DELETE', '/api/pty/t-mine')

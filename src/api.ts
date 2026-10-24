@@ -7,7 +7,13 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`${method} ${url} → ${res.status}`)
+  if (!res.ok) {
+    const detail = await res
+      .json()
+      .then((b: { error?: string }) => b.error)
+      .catch(() => undefined)
+    throw new Error(detail || `${method} ${url} → ${res.status}`)
+  }
   return res.json() as Promise<T>
 }
 

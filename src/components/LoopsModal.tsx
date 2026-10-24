@@ -58,7 +58,7 @@ function LoopList({ loops }: { loops: Loop[] }) {
               {describe(l)} · {l.runs} run{l.runs === 1 ? '' : 's'} · {l.active ? 'active' : `finished (${l.finishedReason})`}
             </div>
           </span>
-          <button className="icon-btn" title="Delete loop" onClick={() => api.removeLoop(l.id)}>
+          <button className="icon-btn" title="Delete loop" onClick={() => api.removeLoop(l.id).catch((e) => useStore.getState().notify(`Delete failed: ${e.message}`))}>
             <Trash2 size={15} />
           </button>
         </div>
@@ -90,19 +90,34 @@ function LoopForm({ onDone }: { onDone: () => void }) {
   const rate = trigger === 'schedule' ? `≈ ${((60 / minutes) * Math.max(1, targetCount)).toFixed(1)} prompts/h across ${Math.max(1, targetCount)} console${targetCount === 1 ? '' : 's'}` : 'fires on events · 10 s cooldown per console'
 
   const start = async () => {
-    if (!instruction.trim()) return useStore.getState().notify('Write the instruction to send')
-    await api.addLoop({
-      name: instruction.slice(0, 40),
-      instruction: instruction.trim(),
-      trigger: trigger === 'schedule' ? { type: 'schedule', everyMs: minutes * 60000 } : trigger === 'idle' ? { type: 'idle' } : { type: 'output', pattern },
-      target: pick ? { ids: picked } : {},
-      scope: project(useStore.getState())?.path,
-      stop: {
-        ...(runsOn ? { runs } : {}),
-        ...(timeOn ? { timeMs: hours * 3600000 } : {}),
-        ...(goalOn && goal.trim() ? { goal: goalType === 'command' ? { type: 'command' as const, command: goal.trim() } : { type: 'judge' as const, text: goal.trim() } } : {}),
-      },
-    })
+    const { notify } = useStore.getState()
+    if (!instruction.trim()) return notify('Write the instruction to send')
+    // An empty pick would otherwise read as "no filter" and hit every console.
+    if (pick && !picked.length) return notify('Pick at least one console')
+    if (trigger === 'output') {
+      if (!pattern.trim()) return notify('Write the text or regex to watch for')
+      try {
+        new RegExp(pattern, 'i')
+      } catch {
+        return notify('That pattern is not a valid regular expression')
+      }
+    }
+    try {
+      await api.addLoop({
+        name: instruction.slice(0, 40),
+        instruction: instruction.trim(),
+        trigger: trigger === 'schedule' ? { type: 'schedule', everyMs: minutes * 60000 } : trigger === 'idle' ? { type: 'idle' } : { type: 'output', pattern },
+        target: pick ? { ids: picked } : {},
+        scope: project(useStore.getState())?.path,
+        stop: {
+          ...(runsOn ? { runs: Math.max(1, Math.round(runs)) } : {}),
+          ...(timeOn ? { timeMs: hours * 3600000 } : {}),
+          ...(goalOn && goal.trim() ? { goal: goalType === 'command' ? { type: 'command' as const, command: goal.trim() } : { type: 'judge' as const, text: goal.trim() } } : {}),
+        },
+      })
+    } catch (e) {
+      return notify(`Loop not started: ${(e as Error).message}`)
+    }
     onDone()
   }
 

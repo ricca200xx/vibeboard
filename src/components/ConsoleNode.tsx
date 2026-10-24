@@ -32,10 +32,10 @@ const THEME = {
   brightWhite: '#ffffff',
 }
 
-export type ConsoleStatus = 'idle' | 'working' | 'needs' | 'done' | 'paused'
+export type ConsoleStatus = 'idle' | 'working' | 'needs' | 'done' | 'paused' | 'stopped'
 
 export function StatusPill({ status }: { status: ConsoleStatus }) {
-  const label = { idle: 'Ready', working: 'Working', needs: 'Needs you', done: 'Done', paused: 'Paused' }[status]
+  const label = { idle: 'Ready', working: 'Working', needs: 'Needs you', done: 'Done', paused: 'Paused', stopped: 'Stopped' }[status]
   return (
     <span className={`status-pill ${status}`}>
       <span className="dot" />
@@ -70,34 +70,39 @@ function launchParams(id: string, epoch: number): Record<string, string> {
 
 function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
+  const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null)
   const fontSize = useStore((s) => s.settings.fontSize)
 
   useEffect(() => {
     const el = ref.current!
     let disposed = false
     let ws: WebSocket | null = null
+    const size = useStore.getState().settings.fontSize
+    // No macOptionIsMeta: on Italian (and most non-US) Mac layouts Option is how you type @ # [ ] { } ~.
+    // Option+Enter and Option+Backspace still send ESC on their own.
     const term = new Terminal({
       fontFamily: '"JetBrains Mono Variable", Menlo, monospace',
-      fontSize,
+      fontSize: size,
       lineHeight: 1.22,
       cursorBlink: true,
       scrollback: 10000,
-      macOptionIsMeta: true,
       theme: THEME,
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
+    termRef.current = { term, fit }
     const refit = () => {
       if (term.element && el.clientWidth > 0) fit.fit()
     }
     // Metrics are measured at open(): the web font must be ready first.
-    document.fonts.load(`${fontSize}px "JetBrains Mono Variable"`).finally(() => {
+    document.fonts.load(`${size}px "JetBrains Mono Variable"`).finally(() => {
       if (disposed) return
       term.open(el)
       refit()
       ws = new WebSocket(ptyUrl({ id, cols: String(term.cols), rows: String(term.rows), ...launchParams(id, epoch) }))
       ws.onmessage = (e) => term.write(e.data)
-      ws.onclose = (e) => e.code === 4000 && !disposed && onExit()
+      // Any close we did not cause means the process is gone (exit, server restart or crash).
+      ws.onclose = () => !disposed && onExit()
       term.onData((data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'i', d: data })))
       // "Typing starts fresh": only a real keystroke dismisses the resume offer. onData would not do:
       // it also fires for the terminal's automatic replies to the TUI's capability queries.
@@ -111,11 +116,20 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
     ro.observe(el)
     return () => {
       disposed = true
+      termRef.current = null
       ro.disconnect()
       ws?.close()
       term.dispose()
     }
-  }, [id, epoch, fontSize])
+  }, [id, epoch])
+
+  // Font size changes in place: remounting would reconnect and replay every console.
+  useEffect(() => {
+    const t = termRef.current
+    if (!t || t.term.options.fontSize === fontSize) return
+    t.term.options.fontSize = fontSize
+    if (t.term.element) t.fit.fit()
+  }, [fontSize])
 
   // ponytail: xterm ignores the board's CSS scale, so mouse selection is offset when zoom != 100%.
   // Keyboard is unaffected; double-click the header to snap the console to 100%.
@@ -157,7 +171,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   const [confirmClose, setConfirmClose] = useState(false)
   const [agentMenu, setAgentMenu] = useState(false)
   const [exited, setExited] = useState(false)
-  const status: ConsoleStatus = live?.paused ? 'paused' : (live?.status ?? 'idle')
+  const status: ConsoleStatus = !live ? 'stopped' : live.paused ? 'paused' : live.status
   const color = agentColor(data.agent)
 
   useEffect(() => setExited(false), [data.epoch])
@@ -262,7 +276,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
             <div className="console-overlay">
               <div className="box">
                 <div>{agentById(data.agent)?.name ?? 'Process'} exited</div>
-                <button className="btn primary" onClick={() => restartConsole(id)}>
+                <button className="btn primary" onClick={() => restartConsole(id, false)}>
                   <RotateCw size={14} /> Relaunch
                 </button>
               </div>
