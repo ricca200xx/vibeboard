@@ -425,6 +425,108 @@ button.pill:hover {
     transform: rotate(360deg);
   }
 }
+.console-head .role {
+  overflow: hidden;
+  min-width: 0;
+  max-width: 220px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* ---------- hand-off wires between consoles ---------- */
+.react-flow__edge-path.handoff-edge {
+  stroke: color-mix(in srgb, var(--accent) 70%, transparent);
+  stroke-width: 2.5;
+}
+.react-flow__edge-path.handoff-edge.manual {
+  stroke: var(--line-2);
+  stroke-dasharray: 7 6;
+}
+.react-flow__edge-path.handoff-edge.busy {
+  stroke: var(--accent);
+  stroke-dasharray: 10 8;
+  animation: wire-flow 0.6s linear infinite;
+}
+@keyframes wire-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+.handoff-label {
+  position: absolute;
+  pointer-events: all;
+  z-index: 5;
+}
+.handoff-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.handoff-pill:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.handoff-pill.busy {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.handoff-menu {
+  top: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 270px;
+  padding: 8px;
+}
+.handoff-menu .menu-item {
+  font-size: 14px;
+  gap: 10px;
+}
+.menu-item.danger {
+  color: #ff8a7a;
+}
+/* The plugs on a console's sides. The target plug grows to cover the whole console while a wire is
+   being dragged, so dropping anywhere on a console connects it. */
+.react-flow__node-console .wire-handle {
+  width: 16px;
+  height: 16px;
+  background: var(--panel-3);
+  border: 2px solid var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 3;
+}
+.react-flow__node-console:hover .wire-handle.source,
+.react-flow__node-console.selected .wire-handle.source,
+.wiring .react-flow__node-console .wire-handle.source {
+  opacity: 1;
+}
+.wiring .react-flow__node-console .wire-handle.target {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: none;
+  border-radius: 14px;
+  border: 2px dashed var(--accent);
+  background: var(--accent-soft);
+  opacity: 0.9;
+}
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge-path.handoff-edge.busy {
+    animation: none;
+  }
+}
+
 /* ---------- sub-agents: satellites under their console ---------- */
 .subagent-tray {
   position: absolute;
@@ -432,13 +534,14 @@ button.pill:hover {
   left: 18px;
   right: 18px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 10px; /* one row only: a second would cover the console below */
   pointer-events: none;
 }
 .subagent {
   position: relative;
   display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
   align-items: center;
   gap: 7px;
   max-width: 230px;
@@ -463,6 +566,7 @@ button.pill:hover {
 .subagent.done {
   opacity: 0.55;
 }
+.handoff-pill .sa-dot,
 .subagent .sa-dot {
   flex: none;
   width: 7px;

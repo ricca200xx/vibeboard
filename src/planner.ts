@@ -8,6 +8,7 @@ export type PlanAction =
   | { type: 'spawn'; agent: string; count: number; group?: string }
   | { type: 'group'; names: string[]; label: string }
   | { type: 'frame'; names: string[] }
+  | { type: 'handoff'; from: string; to: string }
   | { type: 'pause' }
   | { type: 'resume' }
 
@@ -20,6 +21,7 @@ function valid(a: PlanAction): boolean {
   if (a.type === 'spawn') return typeof x.agent === 'string'
   if (a.type === 'group') return strings(x.names) && typeof x.label === 'string'
   if (a.type === 'frame') return strings(x.names)
+  if (a.type === 'handoff') return typeof x.from === 'string' && typeof x.to === 'string'
   return a.type === 'pause' || a.type === 'resume'
 }
 
@@ -61,7 +63,11 @@ export async function runPlanner(command: string): Promise<string> {
     if (a.type === 'send') st.sendTo(byName(a.to), a.text)
     else if (a.type === 'spawn') st.spawnMany(Array(Math.max(1, Math.min(12, a.count || 1))).fill(a.agent), a.group)
     else if (a.type === 'frame') st.frame([...byName(a.names), ...groups.filter((g) => a.names.includes(String(g.data.label))).map((g) => g.id)])
-    else if (a.type === 'pause') st.pauseAll()
+    else if (a.type === 'handoff') {
+      const [from] = byName([a.from])
+      const [to] = byName([a.to])
+      if (from && to) await st.handoff(from, to)
+    } else if (a.type === 'pause') st.pauseAll()
     else if (a.type === 'resume') st.resumeAll()
     else if (a.type === 'group') {
       const ids = new Set(byName(a.names))

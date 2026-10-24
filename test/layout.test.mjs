@@ -1,7 +1,7 @@
 // Group re-flow geometry (src/layout.ts runs as-is under Node's TypeScript type stripping).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { gridLayout } from '../src/layout.ts'
+import { gridLayout, wouldCycle } from '../src/layout.ts'
 
 const W = 640
 const H = 420
@@ -23,6 +23,17 @@ test('a group grows to fit a newcomer and keeps reading order', () => {
   const first = gridLayout([node('a', 24, 68), node('b', 724, 68), node('n', 0, 80)])
   assert.deepEqual(first.slots.get('n'), { x: PAD, y: PAD + HEAD })
   assert.deepEqual(first.slots.get('a'), { x: PAD + W + GAP, y: PAD + HEAD })
+})
+
+test('a hand-off wire that would bounce work in a circle is spotted', () => {
+  const chain = [
+    { source: 'plan', target: 'build' },
+    { source: 'build', target: 'review' },
+  ]
+  assert.equal(wouldCycle(chain, 'review', 'plan'), true) // review -> plan closes the loop
+  assert.equal(wouldCycle(chain, 'build', 'plan'), true)
+  assert.equal(wouldCycle(chain, 'plan', 'review'), false) // a shortcut is fine
+  assert.equal(wouldCycle(chain, 'review', 'docs'), false)
 })
 
 test('an empty group keeps a drop target size', () => {

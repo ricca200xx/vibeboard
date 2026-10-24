@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   applyEdgeChanges,
   applyNodeChanges,
+  MarkerType,
   type Edge,
   type EdgeChange,
   type Node,
@@ -11,7 +12,7 @@ import {
 } from '@xyflow/react'
 import { api, connectEvents, type LiveSession, type Loop, type Status } from './api'
 import { agentById } from '../shared/agents.js'
-import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf } from './layout'
+import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 
 export { CONSOLE_SIZE, freeSpot }
 
@@ -26,8 +27,10 @@ export type ConsoleData = {
   lastSessionId?: string
   resumeOffer?: boolean
   resumeNext?: boolean
+  role?: string // what this agent is for; travels with every hand-off it receives
   epoch: number
 }
+export type HandoffData = { auto: boolean }
 export type GroupData = { label: string; color: string }
 export type NoteData = { text: string; color: string }
 export type TextData = { text: string }
@@ -85,6 +88,7 @@ type S = {
   presets: Preset[]
   flow: ReactFlowInstance | null
   inkColor: string
+  handing: Record<string, boolean> // `${from}>${to}` while a hand-off is being summarised
 
   init: () => void
   set: (patch: Partial<S>) => void
@@ -116,6 +120,10 @@ type S = {
   sendTo: (ids: string[], text: string) => number
   frame: (ids: string[]) => void
   jumpTo: (id: string) => void
+  connectConsoles: (source: string, target: string) => boolean
+  handoff: (from: string, to: string) => Promise<void>
+  setEdgeData: (id: string, patch: Partial<HandoffData>) => void
+  removeEdge: (id: string) => void
   viewCenter: () => { x: number; y: number }
   savePreset: (preset: Omit<Preset, 'id'>) => void
   addMemory: (m: Omit<Memory, 'id'>) => void
@@ -174,6 +182,23 @@ function announce(id: string, status: Status) {
   }
 }
 
+// A plain shell would run each line of a hand-off brief as a command (one could say `rm …`),
+// so work only ever goes to agent consoles.
+function refuseShell(id: string) {
+  const d = findConsole(useStore.getState(), id)?.node.data
+  if (d?.agent !== 'shell') return false
+  useStore.getState().notify(`${d.name} is a plain shell and would run the hand-off as commands. Pick an agent console.`)
+  return true
+}
+
+// A console just finished: every automatic wire leaving it hands its work on.
+function autoHandoff(id: string) {
+  const s = useStore.getState()
+  const hit = findConsole(s, id)
+  if (!hit) return
+  for (const e of hit.ws.edges) if (e.source === id && (e.data as HandoffData | undefined)?.auto) s.handoff(id, e.target)
+}
+
 // Ask once, from a click (browsers only show the prompt after a user gesture).
 export function askNotifyPermission() {
   if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission().catch(() => {})
@@ -228,6 +253,7 @@ export const useStore = create<S>((set, get) => {
     presets: DEFAULT_PRESETS,
     flow: null,
     inkColor: '#e8643c',
+    handing: {},
 
     init: () => {
       // Retried: under `node --watch` the page can load while the server is restarting.
@@ -256,7 +282,10 @@ export const useStore = create<S>((set, get) => {
             const next = e.type === 'status' ? { ...cur, status: e.status } : { ...cur, paused: e.paused }
             return { live: { ...s.live, [e.id]: next } }
           })
-          if (e.type === 'status' && before && before !== e.status) announce(e.id, e.status)
+          if (e.type === 'status' && before && before !== e.status) {
+            announce(e.id, e.status)
+            if (e.status === 'done') autoHandoff(e.id)
+          }
         } else if (e.type === 'exit') {
           forgetLaunch((id) => id !== e.id)
           set((s) => {
@@ -282,6 +311,13 @@ export const useStore = create<S>((set, get) => {
             }
           })
         } else if (e.type === 'loops') set({ loops: e.loops })
+        else if (e.type === 'handoff')
+          set((s) => {
+            const handing = { ...s.handing }
+            if (e.state === 'summarizing') handing[`${e.from}>${e.to}`] = true
+            else delete handing[`${e.from}>${e.to}`]
+            return { handing }
+          })
         else if (e.type === 'subagents')
           set((s) => (s.live[e.id] ? { live: { ...s.live, [e.id]: { ...s.live[e.id], subagents: e.subagents } } } : {}))
       })
@@ -548,6 +584,47 @@ export const useStore = create<S>((set, get) => {
     },
 
     frame: (ids) => get().flow?.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.15, duration: 450, maxZoom: 1 }),
+
+    // A wire between two consoles: when the source finishes, its work is handed to the target.
+    connectConsoles: (source, target) => {
+      const ws = workspace(get())
+      if (!ws || source === target) return false
+      const isConsole = (id: string) => ws.nodes.some((n) => n.id === id && n.type === 'console')
+      if (!isConsole(source) || !isConsole(target)) return false
+      if (refuseShell(target)) return false
+      if (ws.edges.some((e) => e.source === source && e.target === target)) return false
+      if (wouldCycle(ws.edges, source, target)) {
+        get().notify('That would pass work around in a circle. Use a loop for repeating work.')
+        return false
+      }
+      const edge: Edge<HandoffData> = {
+        id: `h-${uid()}`,
+        source,
+        target,
+        type: 'handoff',
+        data: { auto: true },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18 },
+      }
+      updateWs((w) => ({ ...w, edges: [...w.edges, edge] }))
+      return true
+    },
+
+    handoff: async (from, to) => {
+      const name = (id: string) => findConsole(get(), id)?.node.data
+      const a = name(from)
+      const b = name(to)
+      if (!a || !b || refuseShell(to)) return
+      if (!get().live[to]) return get().notify(`${b.name} is not running`)
+      try {
+        const r = await api.handoff({ from, to, fromName: a.name, toName: b.name, role: b.role })
+        if (!r.duplicate) get().notify(`${a.name} handed off to ${b.name}`)
+      } catch (e) {
+        get().notify(`Hand-off failed: ${(e as Error).message}`)
+      }
+    },
+
+    setEdgeData: (id, patch) => updateWs((w) => ({ ...w, edges: w.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data, ...patch } } : e)) })),
+    removeEdge: (id) => updateWs((w) => ({ ...w, edges: w.edges.filter((e) => e.id !== id) })),
 
     // Open whichever project and workspace hold this console, then centre it.
     jumpTo: (id) => {

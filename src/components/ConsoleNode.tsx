@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
+import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { Check, ChevronDown, Copy, RotateCcwClock, RotateCw, X } from 'lucide-react'
+import { Check, ChevronDown, Copy, Forward, RotateCcwClock, RotateCw, X } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { api, ptyUrl, type Subagent } from '../api'
-import { absolute, agentColor, launchCache, useStore, workspace, type ConsoleData } from '../store'
+import { absolute, agentColor, consoles, launchCache, useStore, workspace, type ConsoleData } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 
@@ -136,6 +137,51 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
   return <div ref={ref} style={{ height: '100%' }} />
 }
 
+// The header's hand-off menu: say what this agent is for, or pass its work to another console now.
+function HandoffMenu({ id, role, onClose }: { id: string; role?: string; onClose: () => void }) {
+  const others = useStore(
+    useShallow((s) =>
+      consoles(workspace(s)?.nodes ?? [])
+        .filter((n) => n.id !== id && n.data.agent !== 'shell') // a shell would run the brief as commands
+        .map((n) => `${n.id}\u0000${n.data.name}`),
+    ),
+  )
+  const s = useStore.getState()
+  return (
+    <div className="menu nodrag nowheel" style={{ top: 44, right: 8, width: 290, maxHeight: 360, overflow: 'auto' }} onMouseLeave={onClose}>
+      <div className="menu-title">What this agent does</div>
+      <input
+        className="field"
+        style={{ width: '100%', margin: '6px 0 12px' }}
+        placeholder="e.g. Reviews the code it receives"
+        defaultValue={role}
+        onBlur={(e) => s.updateData(id, { role: e.target.value.trim() || undefined })}
+        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      />
+      <div className="menu-title">Hand its work to</div>
+      {others.length === 0 && <div className="menu-hint">Add another agent console first.</div>}
+      {others.map((o) => {
+        const [oid, name] = o.split('\u0000')
+        return (
+          <button
+            key={oid}
+            className="menu-item"
+            onClick={() => {
+              onClose()
+              s.handoff(id, oid)
+            }}
+          >
+            <Forward size={15} /> {name}
+          </button>
+        )
+      })}
+      <div className="menu-hint" style={{ marginTop: 8 }}>
+        To do it every time this agent finishes, drag the dot on its right edge onto another console.
+      </div>
+    </div>
+  )
+}
+
 const NO_SUBAGENTS: Subagent[] = []
 const SUBAGENT_LINGER_MS = 20_000
 
@@ -154,14 +200,14 @@ function SubagentTray({ id }: { id: string }) {
   if (!shown.length) return null
   return (
     <div className="subagent-tray">
-      {shown.slice(0, 4).map((a) => (
+      {shown.slice(0, 3).map((a) => (
         <div key={a.id} className={`subagent ${a.status}`} title={a.task}>
           {a.status === 'running' ? <span className="sa-dot" /> : <Check size={12} className="sa-check" />}
           <span className="sa-type">{a.type === 'general-purpose' ? 'Helper' : a.type}</span>
           <span className="sa-task">{a.task}</span>
         </div>
       ))}
-      {shown.length > 4 && <div className="subagent more">+{shown.length - 4}</div>}
+      {shown.length > 3 && <div className="subagent more">+{shown.length - 3}</div>}
     </div>
   )
 }
@@ -200,6 +246,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   const [editing, setEditing] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [agentMenu, setAgentMenu] = useState(false)
+  const [handMenu, setHandMenu] = useState(false)
   const [exited, setExited] = useState(false)
   const status: ConsoleStatus = !live ? 'stopped' : live.paused ? 'paused' : live.status
   const color = agentColor(data.agent)
@@ -217,6 +264,8 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={380} minHeight={220} />
+      <Handle type="target" position={Position.Left} className="wire-handle" />
+      <Handle type="source" position={Position.Right} className="wire-handle" title="Drag onto another console: it takes over whenever this one finishes" />
       <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 42%, #2a2724)` }}>
         <div className="console-head" onDoubleClick={snapTo100}>
           <button className="agent-switch nodrag" onClick={() => setAgentMenu((v) => !v)} title={agentById(data.agent)?.name}>
@@ -246,6 +295,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
               {data.name}
             </span>
           )}
+          {data.role && <span className="role">{data.role}</span>}
           {data.yolo && (
             <span className="badge" style={{ color: 'var(--accent)' }}>
               yolo
@@ -253,6 +303,9 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
           )}
           <span className="spacer" />
           <StatusPill status={status} />
+          <button className="icon-btn sm nodrag" title="Hand off this agent's work" onClick={() => setHandMenu((v) => !v)}>
+            <Forward size={15} />
+          </button>
           <button className="icon-btn sm nodrag" title="Restart" onClick={() => restartConsole(id)}>
             <RotateCw size={14} />
           </button>
@@ -263,6 +316,8 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
             <X size={15} />
           </button>
         </div>
+
+        {handMenu && <HandoffMenu id={id} role={data.role} onClose={() => setHandMenu(false)} />}
 
         {agentMenu && (
           <div className="menu nodrag nowheel" style={{ top: 44, left: 8, width: 260, maxHeight: 320, overflow: 'auto' }}>

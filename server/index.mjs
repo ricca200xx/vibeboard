@@ -13,7 +13,8 @@ import { createLoops } from './loops.mjs'
 
 const PORT = Number(process.env.PORT) || 4317
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
-const DATA_DIR = path.join(os.homedir(), '.vibeboard')
+// VIBEBOARD_DATA runs a second, separate board (a demo, a test) without touching your real one.
+const DATA_DIR = process.env.VIBEBOARD_DATA || path.join(os.homedir(), '.vibeboard')
 const STATE_FILE = path.join(DATA_DIR, 'state.json')
 const HOOKS_FILE = path.join(DATA_DIR, 'claude-hooks.json')
 const SHELL = process.env.SHELL || '/bin/zsh'
@@ -287,6 +288,53 @@ async function askClaude(model, prompt, opts) {
   return out.result
 }
 
+// ---------- hand-off: one agent's work, summarised, becomes the next agent's prompt ----------
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-B]|[\x00-\x08\x0b-\x1f]/g
+const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects')
+
+// What the outgoing agent did. Claude's own transcript is clean text; any other CLI only has its
+// screen, so that is used with the escape codes stripped.
+function conversationText(s, max = 15000) {
+  const file = s.transcript && path.resolve(s.transcript)
+  if (file && file.startsWith(CLAUDE_PROJECTS + path.sep) && file.endsWith('.jsonl') && fs.existsSync(file)) {
+    const lines = []
+    for (const raw of fs.readFileSync(file, 'utf8').split('\n').slice(-400)) {
+      let e
+      try {
+        e = JSON.parse(raw)
+      } catch {
+        continue
+      }
+      if (e.type !== 'user' && e.type !== 'assistant') continue
+      const content = typeof e.message?.content === 'string' ? [{ type: 'text', text: e.message.content }] : e.message?.content || []
+      for (const c of content) {
+        if (c.type === 'text' && c.text?.trim()) lines.push(`${e.type === 'user' ? 'User' : 'Agent'}: ${c.text.trim()}`)
+        else if (c.type === 'tool_use') lines.push(`[${c.name} ${JSON.stringify(c.input).slice(0, 160)}]`)
+      }
+    }
+    if (lines.length) return lines.join('\n').slice(-max)
+  }
+  return s.buf.replace(ANSI, '').replace(/\n{3,}/g, '\n\n').slice(-max)
+}
+
+async function handoffBrief(s) {
+  const context = conversationText(s)
+  if (process.env.VIBEBOARD_NO_LLM) return context.slice(-2000) // tests: no model call
+  const prompt =
+    'One coding agent is handing its work to another. From the session below, write the brief the next agent needs: ' +
+    'the goal, what was done (files touched), the current state, open problems and the next steps. ' +
+    'At most 180 words, plain text, no preamble.\n\nSession:\n' +
+    context
+  try {
+    return (await askClaude('haiku', prompt, { cwd: s.cwd, timeout: 120_000 })).trim()
+  } catch (e) {
+    console.error('hand-off summary failed, sending the raw tail:', e.message)
+    return context.slice(-2000)
+  }
+}
+
+const recentHandoffs = new Map() // `${from}>${to}` -> ts: two open tabs must not hand off twice
+
 // The model may wrap its JSON in prose or a ```json fence.
 function parseJSON(text) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
@@ -454,6 +502,30 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 200, { ok: true })
     }
+    if (route === 'handoff' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req, 64 * 1024))
+      const fromName = String(body.fromName || 'the previous agent').slice(0, 80)
+      const toName = String(body.toName || 'the next agent').slice(0, 80)
+      const from = sessions.get(body.from)
+      const to = sessions.get(body.to)
+      if (!from) return json(res, 409, { error: `${fromName} is not running` })
+      if (!to) return json(res, 409, { error: `${toName} is not running` })
+      if (from === to) return json(res, 400, { error: 'an agent cannot hand off to itself' })
+      const key = `${from.id}>${to.id}`
+      if (Date.now() - (recentHandoffs.get(key) || 0) < 20_000) return json(res, 200, { ok: true, duplicate: true })
+      recentHandoffs.set(key, Date.now())
+      broadcast({ type: 'handoff', from: from.id, to: to.id, state: 'summarizing' })
+      const brief = await handoffBrief(from)
+      if (sessions.get(to.id) !== to) {
+        broadcast({ type: 'handoff', from: from.id, to: to.id, state: 'failed' })
+        return json(res, 409, { error: `${toName} stopped before the hand-off arrived` })
+      }
+      const role = typeof body.role === 'string' && body.role.trim() ? `\n\nYour role: ${body.role.trim().slice(0, 500)}` : ''
+      sendPrompt(to, `Hand-off from ${fromName}. Here is where they left off:\n\n${brief}${role}\n\nPick up from here.`)
+      setStatus(to, 'working')
+      broadcast({ type: 'handoff', from: from.id, to: to.id, state: 'sent' })
+      return json(res, 200, { ok: true })
+    }
     if (route === 'pty' && id) {
       const s = sessions.get(id)
       if (!s) return json(res, 404, { error: 'no such console' })
@@ -527,6 +599,7 @@ const server = http.createServer(async (req, res) => {
         '{"type":"spawn","agent":"<one of board.agents>","count":<1-12>,"group":"<optional new group label>"}',
         '{"type":"group","names":["<console names>"],"label":"<group label>"}',
         '{"type":"frame","names":["<console names or group labels>"]}',
+        '{"type":"handoff","from":"<console name>","to":"<console name>"}  (summarise one agent\'s work and give it to another)',
         '{"type":"pause"}  {"type":"resume"}',
         'There is no action to stop or delete a console: if asked, say it needs the close button. If the command is unclear, return no actions and ask in "reply".',
       ].join('\n')

@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 
-const FILE = path.join(os.homedir(), '.vibeboard', 'loops.json')
+const FILE = path.join(process.env.VIBEBOARD_DATA || path.join(os.homedir(), '.vibeboard'), 'loops.json')
 const SHELL = process.env.SHELL || '/bin/zsh'
 const COOLDOWN_MS = 10_000
 const TYPING_MS = 5_000 // no loop types into a console the user touched this recently

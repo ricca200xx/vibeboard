@@ -24,6 +24,20 @@ export function freeSpot(nodes: Node[], rect: { x: number; y: number; width: num
   return { x, y: rect.y }
 }
 
+// Would a wire source -> target close a loop of hand-offs (A -> B -> A would bounce work forever)?
+export function wouldCycle(edges: { source: string; target: string }[], source: string, target: string) {
+  const seen = new Set<string>()
+  const todo = [target]
+  while (todo.length) {
+    const at = todo.pop()!
+    if (at === source) return true
+    if (seen.has(at)) continue
+    seen.add(at)
+    for (const e of edges) if (e.source === at) todo.push(e.target)
+  }
+  return false
+}
+
 // Members in reading order (a row is anything within 120px vertically), laid out in a near-square
 // grid inside the group frame. Positions are relative to the group; returns the frame size too.
 export function gridLayout(members: Node[]) {

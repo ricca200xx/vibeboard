@@ -52,6 +52,8 @@ export const api = {
   reveal: (cwd: string) => call('POST', '/api/reveal', { cwd }),
   scan: (cwd: string) => call<{ kind: string; title: string; text: string }[]>('POST', '/api/scan', { cwd }),
   plan: (command: string, board: unknown) => call<{ reply: string; actions: import('./planner').PlanAction[] }>('POST', '/api/plan', { command, board }),
+  handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string }) =>
+    call<{ ok: boolean; duplicate?: boolean }>('POST', '/api/handoff', body),
   addLoop: (loop: Partial<Loop>) => call<Loop>('POST', '/api/loops', loop),
   removeLoop: (id: string) => call('DELETE', `/api/loops/${id}`),
 }
@@ -67,6 +69,7 @@ export type ServerEvent =
   | { type: 'session-id'; id: string; sessionId: string; prompted: boolean }
   | { type: 'loops'; loops: Loop[] }
   | { type: 'subagents'; id: string; subagents: Subagent[] }
+  | { type: 'handoff'; from: string; to: string; state: 'summarizing' | 'sent' | 'failed' }
 
 // Reconnects forever: the server restarts under `node --watch` during development.
 export function connectEvents(onEvent: (e: ServerEvent) => void) {

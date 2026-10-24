@@ -36,6 +36,7 @@ import { api } from '../api'
 import { absolute, consoles, project, useStore, workspace, type ConsoleData, type Tool } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
+import { HandoffEdge } from './HandoffEdge'
 import { GroupNode, ImageNode, InkNode, KanbanNode, NOTE_COLORS, NoteNode, TextNode, WebNode } from './Nodes'
 import { AgentIcon, Spark } from './icons'
 import { TopBar } from './TopBar'
@@ -55,6 +56,8 @@ const nodeTypes = {
   image: ImageNode,
   ink: InkNode,
 }
+
+const edgeTypes = { handoff: HandoffEdge }
 
 const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
 
@@ -118,6 +121,7 @@ function Board() {
   const tool = useStore((s) => s.tool)
   const flow = useReactFlow()
   const { onNodesChange, onEdgesChange, setViewport, set } = useStore.getState()
+  const [wiring, setWiring] = useState(false) // a wire is being dragged: every console becomes a drop target
 
   useEffect(() => set({ flow }), [flow])
 
@@ -198,6 +202,7 @@ function Board() {
 
   return (
     <div
+      className={wiring ? 'wiring' : undefined}
       style={{ position: 'absolute', inset: 0 }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
@@ -211,8 +216,15 @@ function Board() {
         nodes={ws.nodes}
         edges={ws.edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onConnectStart={() => setWiring(true)}
+        onConnectEnd={() => setWiring(false)}
+        onConnect={(c) => {
+          if (useStore.getState().connectConsoles(c.source, c.target)) useStore.getState().notify('Linked: work passes along whenever the first one finishes')
+        }}
+        isValidConnection={(c) => c.source !== c.target}
         defaultViewport={ws.viewport ?? { x: 120, y: 80, zoom: 0.9 }}
         onMoveEnd={(_, vp) => setViewport(vp)}
         onPaneClick={place}

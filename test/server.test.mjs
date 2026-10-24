@@ -38,7 +38,7 @@ const tail = async (id) => (await (await api('POST', `/api/pty/${id}/tail`, { ch
 
 before(async () => {
   // Pretend the server was launched from inside a Claude Code session.
-  const env = { ...process.env, PORT: String(PORT), HOME, CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1' }
+  const env = { ...process.env, PORT: String(PORT), HOME, CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', VIBEBOARD_NO_LLM: '1' }
   server = spawn(process.execPath, [path.join(ROOT, 'server/index.mjs')], { env, stdio: 'ignore' })
   assert.ok(await until(async () => (await fetch(BASE + '/api/sessions').catch(() => null))?.ok), 'server did not start')
 })
@@ -162,6 +162,24 @@ test("Claude's sub-agents show on their console while they run", async () => {
   assert.ok((await subs()).every((a) => a.status === 'done'))
   await api('DELETE', '/api/pty/t-subs')
   ws.close()
+})
+
+test('a hand-off carries one console\'s work to another as a prompt', async () => {
+  const a = await openShell('t-from')
+  const b = await openShell('t-to')
+  await sleep(800)
+  a.send(JSON.stringify({ t: 'i', d: 'echo WORK_$((20+3))_DONE\r' }))
+  assert.ok(await until(async () => (await tail('t-from')).includes('WORK_23_DONE')))
+  const handoff = (body) => api('POST', '/api/handoff', { from: 't-from', to: 't-to', fromName: 'Maya', toName: 'Otto', ...body })
+  assert.equal((await handoff({})).status, 200)
+  // The brief arrives as one bracketed paste; the shell echoes it back.
+  assert.ok(await until(async () => /Hand-off from Maya[\s\S]*WORK_23_DONE/.test(await tail('t-to'))), 'brief never reached the next console')
+  assert.equal((await (await handoff({})).json()).duplicate, true, 'a second tab firing the same hand-off is ignored')
+  assert.equal((await handoff({ to: 'nope', toName: 'Ghost' })).status, 409)
+  await api('DELETE', '/api/pty/t-from')
+  await api('DELETE', '/api/pty/t-to')
+  a.close()
+  b.close()
 })
 
 test('kill escalates past processes that ignore SIGHUP', async () => {
