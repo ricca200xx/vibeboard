@@ -288,6 +288,12 @@ button.pill:hover {
   color: var(--muted);
   font-size: 12px;
 }
+.menu-item .team-flow {
+  margin-top: 5px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
 .menu-item.disabled {
   opacity: 0.38;
 }

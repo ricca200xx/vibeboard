@@ -5,6 +5,7 @@ import { consoles, EMPTY, project, useStore, workspace } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 import { runPlanner } from '../planner'
+import { TEAMS } from '../teams'
 
 const CHIPS = {
   new: ['#3ecfb2', '#f472b6'],
@@ -155,8 +156,29 @@ function Presets() {
   const s = useStore.getState()
   const selectedAgents = () => consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected).map((n) => n.data.agent)
   return (
-    <div className="menu nowheel" style={{ bottom: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)', width: 380 }}>
-      <div className="menu-title">Presets</div>
+    <div className="menu nowheel" style={{ bottom: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)', width: 400, maxHeight: '70vh', overflow: 'auto' }}>
+      <div className="menu-title">Teams</div>
+      {TEAMS.map((t) => (
+        <button
+          key={t.id}
+          className="menu-item"
+          onClick={() => {
+            s.spawnTeam(t)
+            s.set({ modal: null })
+          }}
+        >
+          <span style={{ flex: 1 }}>
+            <div className="title" style={{ fontSize: 14 }}>
+              {t.name}
+            </div>
+            <div className="sub">{t.description}</div>
+            <div className="team-flow">{t.members.map((m) => m.name).join('  →  ')}</div>
+          </span>
+        </button>
+      ))}
+      <div className="menu-title" style={{ marginTop: 10 }}>
+        Presets
+      </div>
       {presets.map((p) => (
         <button
           key={p.id}

@@ -13,6 +13,7 @@ import {
 import { api, connectEvents, type LiveSession, type Loop, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
+import type { TeamTemplate } from './teams'
 
 export { CONSOLE_SIZE, freeSpot }
 
@@ -111,7 +112,8 @@ type S = {
   restartConsole: (id: string, fresh?: boolean) => Promise<void>
   resumeConsole: (id: string) => Promise<void>
   duplicateConsole: (id: string) => void
-  spawnMany: (agents: string[], label?: string) => void
+  spawnMany: (agents: string[], label?: string, extras?: Partial<ConsoleData>[]) => string[]
+  spawnTeam: (team: TeamTemplate) => void
   groupSelected: (label?: string) => void
   fitGroup: (id: string) => void
   ungroup: (id: string) => void
@@ -226,9 +228,9 @@ export const useStore = create<S>((set, get) => {
     }))
   const updateProject = (fn: (p: Project) => Project) => set((s) => ({ projects: s.projects.map((p) => (p.path === s.active ? fn(p) : p)) }))
 
+  const usedNames = () => new Set(project(get())?.workspaces.flatMap((w) => consoles(w.nodes).map((n) => n.data.name)) ?? [])
   const allocateName = () => {
-    const p = project(get())
-    const used = new Set(p?.workspaces.flatMap((w) => consoles(w.nodes).map((n) => n.data.name)) ?? [])
+    const used = usedNames()
     for (let round = 1; ; round++)
       for (const n of NAMES) {
         const name = round === 1 ? n : `${n} ${round}`
@@ -477,8 +479,8 @@ export const useStore = create<S>((set, get) => {
       return { x: spot.x + width / 2, y: spot.y + height / 2 }
     },
 
-    spawnMany: (agents, label) => {
-      if (!agents.length) return
+    spawnMany: (agents, label, extras) => {
+      if (!agents.length) return []
       const cols = agents.length <= 4 ? Math.min(2, agents.length) : agents.length <= 9 ? 3 : 4
       const rows = Math.ceil(agents.length / cols)
       const gap = 60 // same as a group's re-flow (layout.ts), so the first drop doesn't reshuffle it
@@ -508,10 +510,32 @@ export const useStore = create<S>((set, get) => {
         const cy = Math.floor(i / cols) * (height + gap) + height / 2
         // spawnMany frames the whole batch itself, so no per-console reveal.
         return gid
-          ? get().addConsole(agent, { x: pad + cx, y: pad + head + cy }, undefined, gid, false)
-          : get().addConsole(agent, { x: origin.x + cx, y: origin.y + cy }, undefined, undefined, false)
+          ? get().addConsole(agent, { x: pad + cx, y: pad + head + cy }, extras?.[i], gid, false)
+          : get().addConsole(agent, { x: origin.x + cx, y: origin.y + cy }, extras?.[i], undefined, false)
       })
       setTimeout(() => get().frame(gid ? [gid] : ids), 60)
+      return ids
+    },
+
+    // A ready-made team: one group, each member named after its role, wires already in place.
+    spawnTeam: (team) => {
+      const used = usedNames()
+      const unique = (base: string) => {
+        let name = base
+        for (let n = 2; used.has(name); n++) name = `${base} ${n}`
+        used.add(name)
+        return name
+      }
+      // Hand-offs never go to a plain shell, so a team always runs a real agent.
+      const preferred = get().settings.defaultAgent
+      const agent = preferred && preferred !== 'shell' ? preferred : 'claude'
+      const ids = get().spawnMany(
+        team.members.map(() => agent),
+        team.name,
+        team.members.map((m) => ({ name: unique(m.name), role: m.role })),
+      )
+      for (const [a, b] of team.wires) get().connectConsoles(ids[a], ids[b])
+      get().notify(`${team.name}: give ${team.members[0].name} the task, the rest follows`)
     },
 
     groupSelected: (label) => {
