@@ -282,6 +282,8 @@ export const useStore = create<S>((set, get) => {
             }
           })
         } else if (e.type === 'loops') set({ loops: e.loops })
+        else if (e.type === 'subagents')
+          set((s) => (s.live[e.id] ? { live: { ...s.live, [e.id]: { ...s.live[e.id], subagents: e.subagents } } } : {}))
       })
     },
 
@@ -443,7 +445,7 @@ export const useStore = create<S>((set, get) => {
       if (!agents.length) return
       const cols = agents.length <= 4 ? Math.min(2, agents.length) : agents.length <= 9 ? 3 : 4
       const rows = Math.ceil(agents.length / cols)
-      const gap = 28
+      const gap = 60 // same as a group's re-flow (layout.ts), so the first drop doesn't reshuffle it
       const { width, height } = CONSOLE_SIZE
       const center = get().viewCenter()
       const pad = 24

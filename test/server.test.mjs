@@ -144,6 +144,26 @@ test('shell console runs commands and hooks drive status', async () => {
   ws.close()
 })
 
+test("Claude's sub-agents show on their console while they run", async () => {
+  const ws = await openShell('t-subs')
+  await sleep(300)
+  const subs = async () => (await sessions()).find((s) => s.id === 't-subs')?.subagents ?? []
+  const task = { tool_name: 'Agent', tool_use_id: 'toolu_1', tool_input: { description: 'Find the auth code', subagent_type: 'Explore', prompt: '...' } }
+  await api('POST', '/api/hook/t-subs/PreToolUse', task)
+  await api('POST', '/api/hook/t-subs/PreToolUse', { ...task, tool_use_id: 'toolu_2', tool_input: { description: 'Write tests' } })
+  await api('POST', '/api/hook/t-subs/PreToolUse', { tool_name: 'Bash', tool_use_id: 'toolu_3', tool_input: { command: 'ls' } })
+  assert.deepEqual((await subs()).map((a) => [a.type, a.task, a.status]), [
+    ['Explore', 'Find the auth code', 'running'],
+    ['general-purpose', 'Write tests', 'running'],
+  ])
+  await api('POST', '/api/hook/t-subs/PostToolUse', task)
+  assert.deepEqual((await subs()).map((a) => a.status), ['done', 'running'])
+  await api('POST', '/api/hook/t-subs/Stop', {}) // the turn is over: nothing is left running
+  assert.ok((await subs()).every((a) => a.status === 'done'))
+  await api('DELETE', '/api/pty/t-subs')
+  ws.close()
+})
+
 test('kill escalates past processes that ignore SIGHUP', async () => {
   const ws = await openShell('t-stubborn')
   await sleep(800)

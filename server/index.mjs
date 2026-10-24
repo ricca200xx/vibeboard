@@ -76,7 +76,43 @@ const broadcast = (msg) => {
   for (const c of eventClients) if (c.readyState === 1) c.send(s)
 }
 
-const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, cwd: s.cwd, paused: s.paused, pid: s.pty.pid })
+const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()] })
+
+// Claude's own sub-agents (its Task/Agent tool) appear on its console while they run. PreToolUse
+// opens one, PostToolUse closes it; only the last few finished ones are kept.
+// ponytail: a background sub-agent's PostToolUse fires at launch, so it shows as done early.
+const SUBAGENT_TOOLS = new Set(['Task', 'Agent'])
+function trackSubagent(s, action, payload) {
+  if (!SUBAGENT_TOOLS.has(payload.tool_name)) return
+  const input = payload.tool_input || {}
+  const task = String(input.description || input.prompt || '').slice(0, 140)
+  const key = String(payload.tool_use_id || task)
+  if (!key) return
+  if (action === 'PreToolUse') {
+    const type = String(input.name || input.subagent_type || 'general-purpose').slice(0, 60)
+    s.subagents.set(key, { id: key, type, task, status: 'running', startedAt: Date.now() })
+  } else if (action === 'PostToolUse' && s.subagents.has(key)) {
+    s.subagents.set(key, { ...s.subagents.get(key), status: 'done', endedAt: Date.now() })
+  } else return
+  publishSubagents(s)
+}
+
+// The turn is over (Stop, or an interrupt noticed by the idle prompt): nothing is still running.
+function settleSubagents(s) {
+  let changed = false
+  for (const [k, a] of s.subagents) {
+    if (a.status !== 'running') continue
+    s.subagents.set(k, { ...a, status: 'done', endedAt: Date.now() })
+    changed = true
+  }
+  if (changed) publishSubagents(s)
+}
+
+function publishSubagents(s) {
+  const done = [...s.subagents.values()].filter((a) => a.status === 'done')
+  for (const a of done.slice(0, Math.max(0, done.length - 4))) s.subagents.delete(a.id)
+  broadcast({ type: 'subagents', id: s.id, subagents: [...s.subagents.values()] })
+}
 
 function setStatus(s, status) {
   if (s.status === status) return
@@ -116,7 +152,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
     cwd: dir,
     env: { ...CLEAN_ENV, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0 }
+  const s = { id, agent, cwd: dir, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     for (const c of s.clients) if (c.readyState === 1) c.send(d)
@@ -398,13 +434,21 @@ const server = http.createServer(async (req, res) => {
       const s = sessions.get(id) // after the body: the console may have exited meanwhile
       if (s) {
         const idlePrompt = payload.notification_type === 'idle_prompt' || /waiting for your input/i.test(payload.message || '')
+        if (payload.transcript_path) s.transcript = String(payload.transcript_path)
+        trackSubagent(s, action, payload)
         if (action === 'UserPromptSubmit' || action === 'PreToolUse' || action === 'PostToolUse') setStatus(s, 'working')
-        else if (action === 'Stop') setStatus(s, 'done')
+        else if (action === 'Stop') {
+          setStatus(s, 'done')
+          settleSubagents(s)
+        }
         // Auto-compact restarts the session mid-turn: the agent is still working.
         else if (action === 'SessionStart' && payload.source !== 'compact') setStatus(s, 'idle')
         else if (action === 'Notification' && !idlePrompt) setStatus(s, 'needs')
         // Esc interrupts fire no Stop; the 60s idle notice is what unsticks "working".
-        else if (action === 'Notification' && s.status === 'working') setStatus(s, 'idle')
+        else if (action === 'Notification' && s.status === 'working') {
+          setStatus(s, 'idle')
+          settleSubagents(s)
+        }
         // `prompted` marks a conversation worth resuming: it has at least one prompt on disk.
         if (payload.session_id) broadcast({ type: 'session-id', id: s.id, sessionId: payload.session_id, prompted: action === 'UserPromptSubmit' })
       }

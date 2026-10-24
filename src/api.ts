@@ -17,7 +17,8 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   return res.json() as Promise<T>
 }
 
-export type LiveSession = { id: string; agent: string; status: Status; cwd: string; paused: boolean }
+export type Subagent = { id: string; type: string; task: string; status: 'running' | 'done'; startedAt: number; endedAt?: number }
+export type LiveSession = { id: string; agent: string; status: Status; cwd: string; paused: boolean; subagents?: Subagent[] }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
 export type GitInfo = { branch: string; changes: number; remote: string | null; commits: { hash: string; subject: string; author: string; when: string }[] }
 export type Loop = {
@@ -65,6 +66,7 @@ export type ServerEvent =
   | { type: 'paused'; id: string; paused: boolean }
   | { type: 'session-id'; id: string; sessionId: string; prompted: boolean }
   | { type: 'loops'; loops: Loop[] }
+  | { type: 'subagents'; id: string; subagents: Subagent[] }
 
 // Reconnects forever: the server restarts under `node --watch` during development.
 export function connectEvents(onEvent: (e: ServerEvent) => void) {

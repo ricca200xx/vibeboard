@@ -4,7 +4,7 @@ import type { Node } from '@xyflow/react'
 export const CONSOLE_SIZE = { width: 640, height: 420 }
 export const GROUP_PAD = 24
 export const GROUP_HEAD = 44
-const GROUP_GAP = 28
+const GROUP_GAP = 60 // room for a console's sub-agent cards above the next row
 const EMPTY_GROUP = { width: 380, height: 220 }
 
 export const sizeOf = (n: Node) => ({

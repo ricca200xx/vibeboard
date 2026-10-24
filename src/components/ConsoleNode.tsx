@@ -2,8 +2,8 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { ChevronDown, Copy, RotateCcwClock, RotateCw, X } from 'lucide-react'
-import { api, ptyUrl } from '../api'
+import { Check, ChevronDown, Copy, RotateCcwClock, RotateCw, X } from 'lucide-react'
+import { api, ptyUrl, type Subagent } from '../api'
 import { absolute, agentColor, launchCache, useStore, workspace, type ConsoleData } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
@@ -134,6 +134,36 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
   // ponytail: xterm ignores the board's CSS scale, so mouse selection is offset when zoom != 100%.
   // Keyboard is unaffected; double-click the header to snap the console to 100%.
   return <div ref={ref} style={{ height: '100%' }} />
+}
+
+const NO_SUBAGENTS: Subagent[] = []
+const SUBAGENT_LINGER_MS = 20_000
+
+// Claude's sub-agents hang under its console like satellites: one card per helper with its job,
+// pulsing while it runs, ticked and then gone a little after it finishes.
+function SubagentTray({ id }: { id: string }) {
+  const subs = useStore((s) => s.live[id]?.subagents) ?? NO_SUBAGENTS
+  const [now, setNow] = useState(() => Date.now())
+  const lingering = subs.some((a) => a.status === 'done')
+  useEffect(() => {
+    if (!lingering) return
+    const t = setInterval(() => setNow(Date.now()), 4000)
+    return () => clearInterval(t)
+  }, [lingering])
+  const shown = subs.filter((a) => a.status === 'running' || now - (a.endedAt ?? 0) < SUBAGENT_LINGER_MS)
+  if (!shown.length) return null
+  return (
+    <div className="subagent-tray">
+      {shown.slice(0, 4).map((a) => (
+        <div key={a.id} className={`subagent ${a.status}`} title={a.task}>
+          {a.status === 'running' ? <span className="sa-dot" /> : <Check size={12} className="sa-check" />}
+          <span className="sa-type">{a.type === 'general-purpose' ? 'Helper' : a.type}</span>
+          <span className="sa-task">{a.task}</span>
+        </div>
+      ))}
+      {shown.length > 4 && <div className="subagent more">+{shown.length - 4}</div>}
+    </div>
+  )
 }
 
 function ResumeOffer({ id, sessionId }: { id: string; sessionId: string }) {
@@ -284,6 +314,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
           )}
         </div>
       </div>
+      <SubagentTray id={id} />
     </>
   )
 }
