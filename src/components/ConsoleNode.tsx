@@ -4,7 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { ChevronDown, Copy, RotateCcwClock, RotateCw, X } from 'lucide-react'
 import { api, ptyUrl } from '../api'
-import { absolute, agentColor, useStore, workspace, type ConsoleData } from '../store'
+import { absolute, agentColor, launchCache, useStore, workspace, type ConsoleData } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 
@@ -44,12 +44,11 @@ export function StatusPill({ status }: { status: ConsoleStatus }) {
   )
 }
 
-// Decide once per (console, epoch) how to launch: attach, fresh with a new
-// session id, or resume. Cached so a remount never re-decides with stale data.
-const decided = new Map<string, Record<string, string>>()
+// Decide once per (console, epoch, process) how to launch: attach, fresh with a new
+// session id, or resume. Cached so a quick remount never re-decides with stale data.
 function launchParams(id: string, epoch: number): Record<string, string> {
   const key = `${id}:${epoch}`
-  const cached = decided.get(key)
+  const cached = launchCache.get(key)
   if (cached) return cached
   const s = useStore.getState()
   const d = workspace(s)!.nodes.find((n) => n.id === id)!.data as ConsoleData
@@ -61,11 +60,11 @@ function launchParams(id: string, epoch: number): Record<string, string> {
     } else {
       const sessionId = crypto.randomUUID()
       params = { ...params, sessionId }
-      // A saved session id with no live process means the app was restarted: offer to pick it back up.
-      s.updateData(id, d.sessionId ? { sessionId, lastSessionId: d.sessionId, resumeOffer: true } : { sessionId })
+      // A prompted conversation with no live process means the app was restarted: offer to pick it back up.
+      s.updateData(id, d.resumable ? { sessionId, lastSessionId: d.resumable, resumeOffer: true } : { sessionId })
     }
   }
-  decided.set(key, params)
+  launchCache.set(key, params)
   return params
 }
 
@@ -99,9 +98,10 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       ws = new WebSocket(ptyUrl({ id, cols: String(term.cols), rows: String(term.rows), ...launchParams(id, epoch) }))
       ws.onmessage = (e) => term.write(e.data)
       ws.onclose = (e) => e.code === 4000 && !disposed && onExit()
-      term.onData((data) => {
-        if (ws?.readyState === 1) ws.send(JSON.stringify({ t: 'i', d: data }))
-        // "typing starts fresh": the resume offer goes away on the first keystroke.
+      term.onData((data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'i', d: data })))
+      // "Typing starts fresh": only a real keystroke dismisses the resume offer. onData would not do:
+      // it also fires for the terminal's automatic replies to the TUI's capability queries.
+      term.onKey(() => {
         const n = workspace(useStore.getState())?.nodes.find((x) => x.id === id)
         if ((n?.data as ConsoleData | undefined)?.resumeOffer) useStore.getState().updateData(id, { resumeOffer: false })
       })

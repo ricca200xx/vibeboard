@@ -559,6 +559,13 @@ button.pill:hover {
   letter-spacing: 0.04em;
   text-transform: none;
 }
+.group-head .ungroup {
+  opacity: 0;
+}
+.group-node:hover .group-head .ungroup,
+.react-flow__node.selected .group-head .ungroup {
+  opacity: 1;
+}
 .group-head input {
   background: var(--panel-3);
   border: 0;
@@ -1002,6 +1009,8 @@ button.pill:hover {
   gap: 8px;
   border: 1px solid var(--line-2);
   background: var(--panel-2);
+  white-space: nowrap;
+  flex: none;
 }
 .btn:hover {
   border-color: var(--muted);
@@ -1108,7 +1117,7 @@ textarea.field {
   flex: 1;
   min-height: 460px;
 }
-.mm-graph svg {
+.mm-graph > svg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -1507,16 +1516,17 @@ textarea.field {
   width: 86px;
   height: 86px;
 }
+/* 53 weeks × 8px fits the 470px panel */
 .heat {
   display: grid;
   grid-auto-flow: column;
-  grid-template-rows: repeat(7, 9px);
-  gap: 3px;
+  grid-template-rows: repeat(7, 6px);
+  gap: 2px;
 }
 .heat i {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 1.5px;
   background: #24221f;
 }
 
@@ -1565,6 +1575,12 @@ textarea.field {
 }
 .project-card:hover {
   border-color: var(--accent);
+}
+.project-card .forget {
+  opacity: 0;
+}
+.project-card:hover .forget {
+  opacity: 1;
 }
 .project-card .t {
   font-weight: 600;

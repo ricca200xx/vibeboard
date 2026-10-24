@@ -20,6 +20,7 @@ export type Loop = {
   instruction: string
   trigger: { type: 'schedule'; everyMs: number } | { type: 'idle' } | { type: 'output'; pattern: string }
   target?: { ids?: string[] }
+  scope?: string
   stop: { runs?: number; timeMs?: number; goal?: { type: 'command'; command: string } | { type: 'judge'; text: string } }
   runs: number
   startedAt: number
@@ -56,7 +57,7 @@ export type ServerEvent =
   | { type: 'status'; id: string; status: Status }
   | { type: 'exit'; id: string; code: number }
   | { type: 'paused'; id: string; paused: boolean }
-  | { type: 'session-id'; id: string; sessionId: string }
+  | { type: 'session-id'; id: string; sessionId: string; prompted: boolean }
   | { type: 'loops'; loops: Loop[] }
 
 // Reconnects forever: the server restarts under `node --watch` during development.

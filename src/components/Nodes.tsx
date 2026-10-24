@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
 import { ArrowRight, ExternalLink, Globe, LayoutList, Plus, RotateCw, Users, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
@@ -34,6 +34,9 @@ function GroupNodeImpl({ id, data, selected }: NodeProps<Node<GroupData>>) {
           <span className="meta">
             {members.length} · {working ? `${working} running` : 'idle'}
           </span>
+          <button className="icon-btn sm nodrag ungroup" title="Ungroup (consoles stay)" onClick={() => useStore.getState().ungroup(id)}>
+            <X size={13} />
+          </button>
         </div>
       </div>
     </>
@@ -41,13 +44,24 @@ function GroupNodeImpl({ id, data, selected }: NodeProps<Node<GroupData>>) {
 }
 export const GroupNode = memo(GroupNodeImpl)
 
+// React Flow focuses a freshly selected node after mount; take the focus back on the next tick.
+function useFocusWhenNew(ref: React.RefObject<HTMLTextAreaElement | null>, isNew: boolean) {
+  useEffect(() => {
+    if (!isNew) return
+    const t = setTimeout(() => ref.current?.focus(), 30)
+    return () => clearTimeout(t)
+  }, [])
+}
+
 function NoteNodeImpl({ id, data, selected }: NodeProps<Node<NoteData>>) {
   const updateData = useStore((s) => s.updateData)
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useFocusWhenNew(ref, !data.text)
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={140} minHeight={110} />
       <div className="note-node" style={{ background: data.color }}>
-        <textarea className="nodrag nowheel" value={data.text} placeholder="Note…" onChange={(e) => updateData(id, { text: e.target.value })} />
+        <textarea ref={ref} className="nodrag nowheel" value={data.text} placeholder="Note…" onChange={(e) => updateData(id, { text: e.target.value })} />
       </div>
     </>
   )
@@ -57,10 +71,13 @@ export const NoteNode = memo(NoteNodeImpl)
 function TextNodeImpl({ id, data }: NodeProps<Node<TextData>>) {
   const updateData = useStore((s) => s.updateData)
   const [editing, setEditing] = useState(!data.text)
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useFocusWhenNew(ref, !data.text)
   return (
     <div className="text-node" onDoubleClick={() => setEditing(true)}>
       {editing ? (
         <textarea
+          ref={ref}
           className="nodrag nowheel"
           autoFocus
           rows={Math.max(1, data.text.split('\n').length)}

@@ -24,12 +24,9 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
 
   const list = () => [...loops.values()]
 
-  const targetsOf = (loop) => {
-    const all = [...sessions.values()]
-    return loop.target?.ids?.length ? all.filter((s) => loop.target.ids.includes(s.id)) : all
-  }
-
-  const targets = (loop, s) => (loop.target?.ids?.length ? loop.target.ids.includes(s.id) : true)
+  // "All consoles" means all consoles of the loop's project (scope = project folder), never other boards.
+  const targets = (loop, s) => (loop.target?.ids?.length ? loop.target.ids.includes(s.id) : !loop.scope || s.cwd === loop.scope)
+  const targetsOf = (loop) => [...sessions.values()].filter((s) => targets(loop, s))
 
   async function goalMet(loop, sample) {
     const goal = loop.stop?.goal
@@ -42,7 +39,7 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
     if (goal.type === 'judge' && goal.text) {
       const output = (sample?.buf || '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').slice(-6000)
       const prompt = `You judge whether a coding agent reached its goal.\nGoal: ${goal.text}\n\nRecent console output:\n${output}\n\nAnswer with exactly YES or NO.`
-      const r = await run(SHELL, ['-lic', `claude -p ${shq(prompt)}`], { cwd, timeout: 180_000 })
+      const r = await run(SHELL, ['-lic', `claude -p --model haiku ${shq(prompt)}`], { cwd, timeout: 180_000 })
       return /^\s*YES\b/i.test(r.stdout)
     }
     return false
@@ -106,6 +103,7 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
       instruction: String(input.instruction || '').slice(0, 8000),
       trigger: input.trigger,
       target: input.target,
+      scope: typeof input.scope === 'string' ? input.scope : undefined,
       stop: input.stop || {},
       runs: 0,
       startedAt: Date.now(),

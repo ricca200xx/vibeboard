@@ -22,6 +22,12 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 fs.mkdirSync(DATA_DIR, { recursive: true })
 
+// When the server itself is started from a Claude Code terminal, its session variables
+// (child-session marker, session id, messaging token) must not leak into the consoles:
+// a Claude that thinks it is a child session stops saving transcripts, which breaks resume.
+const STRIP_ENV = /^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_JOB_DIR$|CLAUDE_PID$)/
+const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !STRIP_ENV.test(k)))
+
 // Claude Code gets these hooks through --settings, so the user's global config stays untouched.
 const hook = (event) => ({
   type: 'command',
@@ -104,7 +110,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
     cols: cols || 100,
     rows: rows || 30,
     cwd: dir,
-    env: { ...process.env, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
+    env: { ...CLEAN_ENV, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
   const s = { id, agent, cwd: dir, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null }
   p.onData((d) => {
@@ -129,11 +135,19 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
   return s
 }
 
-function kill(s) {
+const signalGroup = (s, sig) => {
   try {
-    process.kill(-s.pty.pid, 'SIGCONT')
+    process.kill(-s.pty.pid, sig)
   } catch {}
-  s.pty.kill('SIGHUP')
+}
+
+// Claude Code ignores SIGHUP, so escalate on the whole group (its MCP servers included)
+// until the exit handler has removed the session.
+function kill(s) {
+  signalGroup(s, 'SIGCONT')
+  signalGroup(s, 'SIGHUP')
+  setTimeout(() => sessions.get(s.id) === s && signalGroup(s, 'SIGTERM'), 1500)
+  setTimeout(() => sessions.get(s.id) === s && signalGroup(s, 'SIGKILL'), 4000)
 }
 
 function signal(s, sig) {
@@ -145,9 +159,10 @@ function signal(s, sig) {
 
 const writeTo = (s, text) => s.pty.write(text)
 
-// Claude's TUI needs a moment between the text and the Enter, or it treats them as a paste.
+// Multi-line text goes in as a bracketed paste so each newline doesn't submit on its own;
+// the Enter follows after a beat, or the TUI folds it into the paste.
 function sendPrompt(s, text) {
-  writeTo(s, text)
+  writeTo(s, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text)
   setTimeout(() => writeTo(s, '\r'), 120)
 }
 
@@ -156,7 +171,7 @@ const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
 // ---------- helpers ----------
 function runCommand(cmd, args, opts = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: 15000, maxBuffer: 4 * 1024 * 1024, ...opts }, (err, stdout, stderr) =>
+    execFile(cmd, args, { timeout: 15000, maxBuffer: 4 * 1024 * 1024, env: CLEAN_ENV, ...opts }, (err, stdout, stderr) =>
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: String(stdout), stderr: String(stderr) }),
     )
   })
@@ -219,30 +234,42 @@ async function gitInfo(cwd) {
 }
 
 // Claude Code writes one JSONL per session; tokens per day come straight from there.
-function usageStats() {
+// Async and cached per file (mtime+size), so a big log folder never stalls the PTYs.
+const usageCache = new Map() // file -> { key, days }
+async function usageStats() {
   const base = path.join(os.homedir(), '.claude', 'projects')
   const days = {}
   let total = 0
   const since = Date.now() - 365 * 864e5
   if (!fs.existsSync(base)) return { days, total }
-  for (const proj of fs.readdirSync(base)) {
+  for (const proj of await fs.promises.readdir(base)) {
     const dir = path.join(base, proj)
-    if (!fs.statSync(dir).isDirectory()) continue
-    for (const f of fs.readdirSync(dir)) {
+    if (!(await fs.promises.stat(dir)).isDirectory()) continue
+    for (const f of await fs.promises.readdir(dir)) {
       if (!f.endsWith('.jsonl')) continue
       const file = path.join(dir, f)
-      if (fs.statSync(file).mtimeMs < since) continue
-      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-        if (!line.includes('"usage"')) continue
-        try {
-          const e = JSON.parse(line)
-          const u = e.message?.usage
-          if (!u || !e.timestamp) continue
-          const n = (u.input_tokens || 0) + (u.output_tokens || 0)
-          const day = e.timestamp.slice(0, 10)
-          days[day] = (days[day] || 0) + n
-          total += n
-        } catch {}
+      const st = await fs.promises.stat(file)
+      if (st.mtimeMs < since) continue
+      const key = `${st.mtimeMs}:${st.size}`
+      let entry = usageCache.get(file)
+      if (entry?.key !== key) {
+        const perFile = {}
+        for (const line of (await fs.promises.readFile(file, 'utf8')).split('\n')) {
+          if (!line.includes('"usage"')) continue
+          try {
+            const e = JSON.parse(line)
+            const u = e.message?.usage
+            if (!u || !e.timestamp) continue
+            const day = e.timestamp.slice(0, 10)
+            perFile[day] = (perFile[day] || 0) + (u.input_tokens || 0) + (u.output_tokens || 0)
+          } catch {}
+        }
+        entry = { key, days: perFile }
+        usageCache.set(file, entry)
+      }
+      for (const [day, n] of Object.entries(entry.days)) {
+        days[day] = (days[day] || 0) + n
+        total += n
       }
     }
   }
@@ -255,7 +282,7 @@ function serveStatic(req, res) {
   const dist = path.join(ROOT, 'dist')
   const url = new URL(req.url, 'http://x')
   let file = path.normalize(path.join(dist, decodeURIComponent(url.pathname)))
-  if (!file.startsWith(dist)) return json(res, 403, { error: 'forbidden' })
+  if (file !== dist && !file.startsWith(dist + path.sep)) return json(res, 403, { error: 'forbidden' })
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dist, 'index.html')
   if (!fs.existsSync(file)) return json(res, 404, { error: 'run npm run build first' })
   res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' })
@@ -291,7 +318,8 @@ const server = http.createServer(async (req, res) => {
         else if (action === 'SessionStart') setStatus(s, 'idle')
         else if (action === 'Notification' && payload.notification_type !== 'idle_prompt' && !/waiting for your input/i.test(payload.message || ''))
           setStatus(s, 'needs')
-        if (payload.session_id) broadcast({ type: 'session-id', id: s.id, sessionId: payload.session_id })
+        // `prompted` marks a conversation worth resuming: it has at least one prompt on disk.
+        if (payload.session_id) broadcast({ type: 'session-id', id: s.id, sessionId: payload.session_id, prompted: action === 'UserPromptSubmit' })
       }
       return json(res, 200, { ok: true })
     }
@@ -342,7 +370,7 @@ const server = http.createServer(async (req, res) => {
       const prompt =
         'Read this repository and write the facts a coding agent must know before working here. ' +
         'Reply with ONLY a JSON array, no prose, of 4 to 10 objects {"kind": one of "Structure","Commands","Conventions","Gotchas", "title": short, "text": 1-3 sentences}.'
-      const r = await runCommand(SHELL, ['-lic', `claude -p ${shq(prompt)}`], { cwd, timeout: 240_000 })
+      const r = await runCommand(SHELL, ['-lic', `claude -p --model sonnet ${shq(prompt)}`], { cwd, timeout: 240_000 })
       const match = r.stdout.match(/\[[\s\S]*\]/)
       if (!match) return json(res, 502, { error: 'no JSON in agent reply' })
       return json(res, 200, JSON.parse(match[0]))
@@ -368,7 +396,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, JSON.parse(match[0]))
     }
     if (route === 'git') return json(res, 200, await gitInfo(url.searchParams.get('cwd')))
-    if (route === 'usage') return json(res, 200, usageStats())
+    if (route === 'usage') return json(res, 200, await usageStats())
     if (route === 'loops') {
       if (req.method === 'GET') return json(res, 200, loops.list())
       if (req.method === 'POST') return json(res, 200, loops.add(JSON.parse(await readBody(req, 1024 * 1024))))
@@ -450,8 +478,14 @@ function attachPty(ws, q) {
 server.listen(PORT, '127.0.0.1', () => console.log(`vibeboard server on http://127.0.0.1:${PORT}`))
 
 const shutdown = () => {
-  for (const s of sessions.values()) kill(s)
-  process.exit(0)
+  for (const s of sessions.values()) {
+    signalGroup(s, 'SIGCONT')
+    signalGroup(s, 'SIGTERM')
+  }
+  setTimeout(() => {
+    for (const s of sessions.values()) signalGroup(s, 'SIGKILL')
+    process.exit(0)
+  }, 1200)
 }
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)

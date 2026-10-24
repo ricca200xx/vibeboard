@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Folder, FolderGit2, Plus, Search } from 'lucide-react'
+import { ArrowLeft, Folder, FolderGit2, Plus, Search, X } from 'lucide-react'
 import { api } from '../api'
 import { consoles, useStore } from '../store'
 import { Spark } from './icons'
@@ -35,6 +35,17 @@ export function Home() {
                   <button key={p.path} className="project-card" onClick={() => openProject(p.path)}>
                     <div className="t">
                       <Folder size={17} color="var(--muted)" /> {p.name}
+                      <span className="spacer" />
+                      <span
+                        className="icon-btn sm forget"
+                        title="Remove from Recent"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          useStore.getState().forgetProject(p.path)
+                        }}
+                      >
+                        <X size={13} />
+                      </span>
                     </div>
                     <div className="p">{p.path}</div>
                     <div className="meta">

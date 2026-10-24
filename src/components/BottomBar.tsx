@@ -260,6 +260,8 @@ function CommandBar() {
     const down = (e: KeyboardEvent) => {
       if (e.code === 'Space' && !e.repeat && !busyTarget(e) && !useStore.getState().modal) {
         e.preventDefault()
+        // A focused chip would also "click" on space; drop its focus first.
+        if ((e.target as HTMLElement).closest('button')) (e.target as HTMLElement).blur()
         startVoice()
       }
     }

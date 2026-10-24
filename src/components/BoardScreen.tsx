@@ -210,6 +210,9 @@ function Board() {
         selectionOnDrag={tool === 'select'}
         panOnDrag={[1, 2]}
         deleteKeyCode={null}
+        multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
+        selectionKeyCode={null}
+        panActivationKeyCode={null} // space is push-to-talk; pan with two fingers or the middle button
         className={tool !== 'select' ? 'placing' : ''}
         proOptions={{ hideAttribution: true }}
       >

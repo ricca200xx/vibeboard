@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Clock, Crosshair, LayoutGrid, ListChecks, Moon, Plus, Repeat, ScanText, SquareTerminal, Trash2, X } from 'lucide-react'
 import { api, type Loop } from '../api'
-import { consoles, useStore, workspace } from '../store'
+import { consoles, project, useStore, workspace } from '../store'
 
 type Trigger = 'schedule' | 'idle' | 'output'
 const INTERVALS: [string, number][] = [
@@ -96,6 +96,7 @@ function LoopForm({ onDone }: { onDone: () => void }) {
       instruction: instruction.trim(),
       trigger: trigger === 'schedule' ? { type: 'schedule', everyMs: minutes * 60000 } : trigger === 'idle' ? { type: 'idle' } : { type: 'output', pattern },
       target: pick ? { ids: picked } : {},
+      scope: project(useStore.getState())?.path,
       stop: {
         ...(runsOn ? { runs } : {}),
         ...(timeOn ? { timeMs: hours * 3600000 } : {}),

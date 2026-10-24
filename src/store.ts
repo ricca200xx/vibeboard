@@ -19,6 +19,7 @@ export type ConsoleData = {
   cwd: string
   yolo?: boolean
   sessionId?: string
+  resumable?: string // last session that received a prompt: the one worth offering back
   lastSessionId?: string
   resumeOffer?: boolean
   resumeNext?: boolean
@@ -43,6 +44,13 @@ export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; 
 
 // Stable fallback so selectors never return a fresh [] (that re-renders forever).
 export const EMPTY: Node[] = []
+
+// How each console was last launched, keyed `${id}:${epoch}`. Valid only while that process
+// lives: dropped on exit and when the server comes back without it.
+export const launchCache = new Map<string, Record<string, string>>()
+const forgetLaunch = (keep: (id: string) => boolean) => {
+  for (const key of [...launchCache.keys()]) if (!keep(key.slice(0, key.lastIndexOf(':')))) launchCache.delete(key)
+}
 
 export const NAMES = ['Maya', 'Otto', 'Iris', 'Kai', 'Mila', 'Ren', 'Juno', 'Ada', 'Bex', 'Cy', 'Pip', 'Dax', 'Rafa', 'Lumi', 'Noor', 'Taro', 'Vera', 'Zed', 'Sol', 'Wren']
 export const DOTS = ['#5b8cff', '#ff5a4e', '#a477ff', '#3ecf8e', '#f5b83d', '#ff7ac6', '#4fd1d9']
@@ -81,6 +89,7 @@ type S = {
   notify: (msg: string) => void
   openProject: (path: string) => void
   goHome: () => void
+  forgetProject: (path: string) => void
   closeProject: () => Promise<void>
   addWorkspace: () => void
   switchWorkspace: (id: string) => void
@@ -136,6 +145,18 @@ const sizeOf = (n: Node) => ({
   height: n.measured?.height ?? n.height ?? (n.style?.height as number) ?? CONSOLE_SIZE.height,
 })
 
+// Slide a rect right past whatever top-level node it would cover, so auto-placed nodes never overlap.
+export function freeSpot(nodes: Node[], rect: { x: number; y: number; width: number; height: number }) {
+  const boxes = nodes.filter((n) => !n.parentId).map((n) => ({ ...n.position, ...sizeOf(n) }))
+  let { x } = rect
+  for (let guard = 0; guard < 200; guard++) {
+    const hit = boxes.find((b) => x < b.x + b.width + 32 && x + rect.width + 32 > b.x && rect.y < b.y + b.height + 32 && rect.y + rect.height + 32 > b.y)
+    if (!hit) break
+    x = hit.x + hit.width + 40
+  }
+  return { x, y: rect.y }
+}
+
 function waitGone(id: string, ms = 3000) {
   return new Promise<void>((resolve) => {
     const t0 = Date.now()
@@ -187,7 +208,9 @@ export const useStore = create<S>((set, get) => {
       api.agents().then((installed) => set({ installed }))
       connectEvents((e) => {
         if (e.type === 'sessions') {
-          set({ live: Object.fromEntries(e.sessions.map((x) => [x.id, x])), liveReady: true })
+          const live = Object.fromEntries(e.sessions.map((x) => [x.id, x]))
+          forgetLaunch((id) => !!live[id])
+          set({ live, liveReady: true })
           set((s) => ({ ready: s.loaded }))
         } else if (e.type === 'spawn') set((s) => ({ live: { ...s.live, [e.session.id]: e.session } }))
         else if (e.type === 'status' || e.type === 'paused') {
@@ -198,6 +221,7 @@ export const useStore = create<S>((set, get) => {
             return { live: { ...s.live, [e.id]: next } }
           })
         } else if (e.type === 'exit') {
+          forgetLaunch((id) => id !== e.id)
           set((s) => {
             const live = { ...s.live }
             delete live[e.id]
@@ -210,7 +234,12 @@ export const useStore = create<S>((set, get) => {
               ...p,
               workspaces: p.workspaces.map((w) => ({
                 ...w,
-                nodes: w.nodes.map((n) => (n.id === e.id && (n.data as ConsoleData).sessionId !== e.sessionId ? { ...n, data: { ...n.data, sessionId: e.sessionId } } : n)),
+                nodes: w.nodes.map((n) => {
+                  if (n.id !== e.id) return n
+                  const d = n.data as ConsoleData
+                  if (d.sessionId === e.sessionId && (!e.prompted || d.resumable === e.sessionId)) return n
+                  return { ...n, data: { ...d, sessionId: e.sessionId, ...(e.prompted ? { resumable: e.sessionId } : {}) } }
+                }),
               })),
             })),
           }))
@@ -236,6 +265,14 @@ export const useStore = create<S>((set, get) => {
       }),
 
     goHome: () => set({ active: null, modal: null }),
+
+    // Drops a project from Recent (its board too). Refused while any of its consoles runs.
+    forgetProject: (path) => {
+      const p = get().projects.find((x) => x.path === path)
+      if (!p) return
+      if (p.workspaces.some((w) => consoles(w.nodes).some((n) => get().live[n.id]))) return get().notify('Close its running consoles first')
+      set((s) => ({ projects: s.projects.filter((x) => x.path !== path), active: s.active === path ? null : s.active }))
+    },
 
     closeProject: async () => {
       const p = project(get())
@@ -334,13 +371,18 @@ export const useStore = create<S>((set, get) => {
       const n = ws?.nodes.find((x) => x.id === id) as Node<ConsoleData> | undefined
       if (!n) return
       const pos = absolute(ws!.nodes, n)
-      const { width, height } = sizeOf(n)
-      get().addConsole(n.data.agent, { x: pos.x + width * 1.5 + 32, y: pos.y + height / 2 }, { yolo: n.data.yolo, cwd: n.data.cwd })
+      const { width } = sizeOf(n)
+      const spot = freeSpot(ws!.nodes, { x: pos.x + width + 40, y: pos.y, width: CONSOLE_SIZE.width, height: CONSOLE_SIZE.height })
+      get().addConsole(n.data.agent, { x: spot.x + CONSOLE_SIZE.width / 2, y: spot.y + CONSOLE_SIZE.height / 2 }, { yolo: n.data.yolo, cwd: n.data.cwd })
     },
 
+    // Centre of the view, nudged to free space for a console-sized node.
     viewCenter: () => {
       const flow = get().flow
-      return flow ? flow.screenToFlowPosition({ x: innerWidth / 2, y: innerHeight / 2 - 40 }) : { x: 0, y: 0 }
+      const c = flow ? flow.screenToFlowPosition({ x: innerWidth / 2, y: innerHeight / 2 - 40 }) : { x: 0, y: 0 }
+      const { width, height } = CONSOLE_SIZE
+      const spot = freeSpot(workspace(get())?.nodes ?? [], { x: c.x - width / 2, y: c.y - height / 2, width, height })
+      return { x: spot.x + width / 2, y: spot.y + height / 2 }
     },
 
     spawnMany: (agents, label) => {
@@ -354,7 +396,9 @@ export const useStore = create<S>((set, get) => {
       const head = label ? 44 : 0
       const totalW = cols * width + (cols - 1) * gap
       const totalH = rows * height + (rows - 1) * gap
-      const origin = { x: center.x - totalW / 2, y: center.y - totalH / 2 }
+      const nodes = workspace(get())?.nodes ?? []
+      const spot = freeSpot(nodes, { x: center.x - totalW / 2 - pad, y: center.y - totalH / 2 - pad - head, width: totalW + pad * 2, height: totalH + pad * 2 + head })
+      const origin = { x: spot.x + pad, y: spot.y + pad + head }
       let gid: string | undefined
       if (label) {
         gid = `g-${uid()}`
@@ -382,29 +426,40 @@ export const useStore = create<S>((set, get) => {
       if (!picked.length) return get().notify('Select consoles on the board first')
       const pad = 24
       const head = 44
-      const boxes = picked.map((n) => ({ ...n.position, ...sizeOf(n) }))
-      const x0 = Math.min(...boxes.map((b) => b.x)) - pad
-      const y0 = Math.min(...boxes.map((b) => b.y)) - pad - head
-      const x1 = Math.max(...boxes.map((b) => b.x + b.width)) + pad
-      const y1 = Math.max(...boxes.map((b) => b.y + b.height)) + pad
+      const gap = 28
+      // Members are re-laid in a compact grid (reading order), so the frame never swallows
+      // a console that is not part of the group.
+      const sorted = [...picked].sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x)
+      const cols = Math.ceil(Math.sqrt(sorted.length))
+      const sizes = sorted.map(sizeOf)
+      const colW = Array.from({ length: cols }, (_, c) => Math.max(...sizes.filter((_, i) => i % cols === c).map((s) => s.width)))
+      const rows = Math.ceil(sorted.length / cols)
+      const rowH = Array.from({ length: rows }, (_, r) => Math.max(...sizes.filter((_, i) => Math.floor(i / cols) === r).map((s) => s.height)))
+      const offsetX = (c: number) => pad + colW.slice(0, c).reduce((a, b) => a + b + gap, 0)
+      const offsetY = (r: number) => pad + head + rowH.slice(0, r).reduce((a, b) => a + b + gap, 0)
+      const width = offsetX(cols) - gap + pad
+      const height = offsetY(rows) - gap + pad
+      const ids = new Set(picked.map((n) => n.id))
+      const origin = freeSpot(
+        ws.nodes.filter((n) => !ids.has(n.id)),
+        { x: Math.min(...picked.map((n) => n.position.x)) - pad, y: Math.min(...picked.map((n) => n.position.y)) - pad - head, width, height },
+      )
       const gid = `g-${uid()}`
       const groupCount = ws.nodes.filter((n) => n.type === 'group').length
       const group: Node<GroupData> = {
         id: gid,
         type: 'group',
-        position: { x: x0, y: y0 },
-        style: { width: x1 - x0, height: y1 - y0 },
+        position: origin,
+        style: { width, height },
         data: { label: label || `Group ${groupCount + 1}`, color: GROUP_COLORS[groupCount % GROUP_COLORS.length] },
       }
-      const ids = new Set(picked.map((n) => n.id))
+      const slot = new Map(sorted.map((n, i) => [n.id, { x: offsetX(i % cols), y: offsetY(Math.floor(i / cols)) }]))
       updateWs((w) => ({
         ...w,
         // Parents must come before children in React Flow's node array.
-        nodes: [
-          group,
-          ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, selected: false, position: { x: n.position.x - x0, y: n.position.y - y0 } } : n)),
-        ],
+        nodes: [group, ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, selected: false, position: slot.get(n.id)! } : n))],
       }))
+      setTimeout(() => get().frame([gid]), 60)
     },
 
     ungroup: (id) => get().removeNode(id),
