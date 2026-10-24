@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RotateCw, Settings, X } from 'lucide-react'
 import { api } from '../api'
-import { useStore } from '../store'
+import { askNotifyPermission, useStore } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { AgentIcon, Spark } from './icons'
 import { fmtTokens } from './TopBar'
@@ -43,6 +43,19 @@ export function SettingsModal() {
             <span>
               New consoles skip permission prompts (YOLO)
               <div style={{ color: 'var(--muted)', fontSize: 13 }}>Claude runs with --dangerously-skip-permissions. Only on repos you trust.</div>
+            </span>
+          </div>
+          <div className="toggle-row">
+            <button
+              className={`toggle ${settings.notify !== false ? 'on' : ''}`}
+              onClick={() => {
+                if (settings.notify === false) askNotifyPermission()
+                patch({ notify: settings.notify === false })
+              }}
+            />
+            <span>
+              Notify me when an agent needs me or finishes
+              <div style={{ color: 'var(--muted)', fontSize: 13 }}>Only while you are in another window. Click the notification to jump to the console.</div>
             </span>
           </div>
           <div className="toggle-row">

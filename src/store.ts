@@ -9,7 +9,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from '@xyflow/react'
-import { api, connectEvents, type LiveSession, type Loop } from './api'
+import { api, connectEvents, type LiveSession, type Loop, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf } from './layout'
 
@@ -43,7 +43,7 @@ export type Preset = { id: string; name: string; agents: string[]; label?: strin
 
 export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban'
 export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer' | 'presets' | 'settings'
-export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean }
+export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean }
 
 // Stable fallback so selectors never return a fresh [] (that re-renders forever).
 export const EMPTY: Node[] = []
@@ -115,6 +115,7 @@ type S = {
   resumeAll: () => void
   sendTo: (ids: string[], text: string) => number
   frame: (ids: string[]) => void
+  jumpTo: (id: string) => void
   viewCenter: () => { x: number; y: number }
   savePreset: (preset: Omit<Preset, 'id'>) => void
   addMemory: (m: Omit<Memory, 'id'>) => void
@@ -141,6 +142,41 @@ export function absolute(nodes: Node[], n: Node) {
     parent = parent.parentId ? nodes.find((p) => p.id === parent!.parentId) : undefined
   }
   return { x, y }
+}
+
+export function findConsole(s: Pick<S, 'projects'>, id: string) {
+  for (const project of s.projects)
+    for (const ws of project.workspaces) {
+      const node = ws.nodes.find((n) => n.id === id && n.type === 'console') as Node<ConsoleData> | undefined
+      if (node) return { project, ws, node }
+    }
+  return null
+}
+
+// Tell the user when an agent needs them or has finished. In the window: a toast for "needs you"
+// only (finishing is visible on the board). Elsewhere: a system notification that jumps back to it.
+function announce(id: string, status: Status) {
+  if (status !== 'needs' && status !== 'done') return
+  const s = useStore.getState()
+  const hit = findConsole(s, id)
+  if (!hit) return
+  const text = status === 'needs' ? `${hit.node.data.name} needs you` : `${hit.node.data.name} finished`
+  if (document.hasFocus()) {
+    if (status === 'needs') s.notify(text)
+    return
+  }
+  if (s.settings.notify === false || typeof Notification === 'undefined' || Notification.permission !== 'granted') return
+  const n = new Notification(text, { body: hit.project.name, tag: id })
+  n.onclick = () => {
+    window.focus()
+    useStore.getState().jumpTo(id)
+    n.close()
+  }
+}
+
+// Ask once, from a click (browsers only show the prompt after a user gesture).
+export function askNotifyPermission() {
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission().catch(() => {})
 }
 
 // Nodes glide to their new place instead of jumping (see `.relayout` in styles.css).
@@ -213,12 +249,14 @@ export const useStore = create<S>((set, get) => {
           set((s) => ({ ready: s.loaded }))
         } else if (e.type === 'spawn') set((s) => ({ live: { ...s.live, [e.session.id]: e.session } }))
         else if (e.type === 'status' || e.type === 'paused') {
+          const before = get().live[e.id]?.status
           set((s) => {
             const cur = s.live[e.id]
             if (!cur) return {}
             const next = e.type === 'status' ? { ...cur, status: e.status } : { ...cur, paused: e.paused }
             return { live: { ...s.live, [e.id]: next } }
           })
+          if (e.type === 'status' && before && before !== e.status) announce(e.id, e.status)
         } else if (e.type === 'exit') {
           forgetLaunch((id) => id !== e.id)
           set((s) => {
@@ -349,6 +387,8 @@ export const useStore = create<S>((set, get) => {
         },
       }
       get().addNode(node)
+      // The first console is the natural moment to ask: from here on there is something to be told about.
+      if (get().settings.notify !== false) askNotifyPermission()
       // Auto-placement may land off screen: pan (same zoom) so the new console is in view.
       if (reveal) setTimeout(() => {
         const flow = get().flow
@@ -507,6 +547,18 @@ export const useStore = create<S>((set, get) => {
 
     frame: (ids) => get().flow?.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.15, duration: 450, maxZoom: 1 }),
 
+    // Open whichever project and workspace hold this console, then centre it.
+    jumpTo: (id) => {
+      const hit = findConsole(get(), id)
+      if (!hit) return
+      set((s) => ({
+        active: hit.project.path,
+        modal: null,
+        projects: s.projects.map((p) => (p.path === hit.project.path ? { ...p, activeWs: hit.ws.id } : p)),
+      }))
+      setTimeout(() => get().frame([id]), 120)
+    },
+
     savePreset: (preset) => set((s) => ({ presets: [...s.presets, { ...preset, id: uid() }] })),
 
     addMemory: (m) => updateProject((p) => ({ ...p, memories: [...p.memories, { ...m, id: uid() }] })),
@@ -551,6 +603,13 @@ useStore.subscribe((s, prev) => {
   if (s.projects === prev.projects && s.active === prev.active && s.settings === prev.settings && s.presets === prev.presets) return
   clearTimeout(saveTimer)
   saveTimer = setTimeout(save, 400)
+})
+
+// The window title counts the agents waiting for you, so it shows in the Dock and the tab bar.
+useStore.subscribe((s, prev) => {
+  if (s.live === prev.live) return
+  const waiting = Object.values(s.live).filter((l) => l.status === 'needs' && !l.paused).length
+  document.title = waiting ? `(${waiting}) vibeboard` : 'vibeboard'
 })
 
 // Edits from the last 400ms before a reload. Best effort: keepalive bodies are capped at 64KB.
