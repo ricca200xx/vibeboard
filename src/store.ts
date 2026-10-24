@@ -101,7 +101,7 @@ type S = {
   addNode: (node: Node) => void
   updateData: (id: string, patch: Record<string, unknown>) => void
   removeNode: (id: string) => Promise<void>
-  addConsole: (agent: string, center: { x: number; y: number }, extra?: Partial<ConsoleData>, parentId?: string) => string
+  addConsole: (agent: string, center: { x: number; y: number }, extra?: Partial<ConsoleData>, parentId?: string, reveal?: boolean) => string
   restartConsole: (id: string) => Promise<void>
   resumeConsole: (id: string) => Promise<void>
   duplicateConsole: (id: string) => void
@@ -327,7 +327,7 @@ export const useStore = create<S>((set, get) => {
       }))
     },
 
-    addConsole: (agent, center, extra, parentId) => {
+    addConsole: (agent, center, extra, parentId, reveal = true) => {
       const id = `c-${uid()}`
       const p = project(get())!
       const node: Node<ConsoleData> = {
@@ -348,6 +348,17 @@ export const useStore = create<S>((set, get) => {
         },
       }
       get().addNode(node)
+      // Auto-placement may land off screen: pan (same zoom) so the new console is in view.
+      if (reveal) setTimeout(() => {
+        const flow = get().flow
+        const n = flow?.getInternalNode(id)
+        if (!flow || !n) return
+        const { x, y } = n.internals.positionAbsolute
+        const tl = flow.flowToScreenPosition({ x, y })
+        const br = flow.flowToScreenPosition({ x: x + CONSOLE_SIZE.width, y: y + CONSOLE_SIZE.height })
+        if (tl.x < 0 || tl.y < 0 || br.x > innerWidth || br.y > innerHeight)
+          flow.setCenter(x + CONSOLE_SIZE.width / 2, y + CONSOLE_SIZE.height / 2, { zoom: flow.getZoom(), duration: 350 })
+      }, 60)
       return id
     },
 
@@ -414,7 +425,10 @@ export const useStore = create<S>((set, get) => {
       const ids = agents.map((agent, i) => {
         const cx = (i % cols) * (width + gap) + width / 2
         const cy = Math.floor(i / cols) * (height + gap) + height / 2
-        return gid ? get().addConsole(agent, { x: pad + cx, y: pad + head + cy }, undefined, gid) : get().addConsole(agent, { x: origin.x + cx, y: origin.y + cy })
+        // spawnMany frames the whole batch itself, so no per-console reveal.
+        return gid
+          ? get().addConsole(agent, { x: pad + cx, y: pad + head + cy }, undefined, gid, false)
+          : get().addConsole(agent, { x: origin.x + cx, y: origin.y + cy }, undefined, undefined, false)
       })
       setTimeout(() => get().frame(gid ? [gid] : ids), 60)
     },
