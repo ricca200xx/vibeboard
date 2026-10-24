@@ -157,9 +157,12 @@ function Board() {
 
   // Dropping a node inside a group adopts it; dragging it out releases it. With a multi-selection
   // every dragged node is judged on its own position, not only the one under the pointer.
+  // Every group touched re-flows afterwards: it grows to take a newcomer, shrinks when one
+  // leaves, and a drag inside a group reorders it.
   const onDragStop = (_: unknown, _node: Node, dragged: Node[]) => {
     const nodes = workspace(useStore.getState())!.nodes
     const moves = new Map<string, Node>()
+    const touched = new Set<string>()
     for (const node of dragged) {
       if (node.type === 'group') continue
       const abs = absolute(nodes, node)
@@ -168,12 +171,15 @@ function Board() {
       const host = nodes.find(
         (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
       )
+      if (node.parentId) touched.add(node.parentId)
+      if (host) touched.add(host.id)
       if (host?.id === node.parentId) continue
       const moved = { ...nodes.find((n) => n.id === node.id)!, parentId: host?.id, position: host ? { x: abs.x - host.position.x, y: abs.y - host.position.y } : abs }
       if (!host) delete moved.parentId
       moves.set(node.id, moved)
     }
-    if (!moves.size) return
+    const refit = () => touched.forEach((g) => useStore.getState().fitGroup(g))
+    if (!moves.size) return refit()
     // Moved to the end of the array: React Flow needs parents before children.
     useStore.setState((st) => ({
       projects: st.projects.map((p) =>
@@ -187,6 +193,7 @@ function Board() {
             },
       ),
     }))
+    refit()
   }
 
   return (

@@ -11,6 +11,9 @@ import {
 } from '@xyflow/react'
 import { api, connectEvents, type LiveSession, type Loop } from './api'
 import { agentById } from '../shared/agents.js'
+import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf } from './layout'
+
+export { CONSOLE_SIZE, freeSpot }
 
 export type ConsoleData = {
   agent: string
@@ -55,7 +58,6 @@ const forgetLaunch = (keep: (id: string) => boolean) => {
 export const NAMES = ['Maya', 'Otto', 'Iris', 'Kai', 'Mila', 'Ren', 'Juno', 'Ada', 'Bex', 'Cy', 'Pip', 'Dax', 'Rafa', 'Lumi', 'Noor', 'Taro', 'Vera', 'Zed', 'Sol', 'Wren']
 export const DOTS = ['#5b8cff', '#ff5a4e', '#a477ff', '#3ecf8e', '#f5b83d', '#ff7ac6', '#4fd1d9']
 export const GROUP_COLORS = ['#e8643c', '#3ecf8e', '#5b8cff', '#a477ff', '#f5b83d']
-export const CONSOLE_SIZE = { width: 640, height: 420 }
 
 const uid = () => crypto.randomUUID().slice(0, 8)
 
@@ -107,6 +109,7 @@ type S = {
   duplicateConsole: (id: string) => void
   spawnMany: (agents: string[], label?: string) => void
   groupSelected: (label?: string) => void
+  fitGroup: (id: string) => void
   ungroup: (id: string) => void
   pauseAll: () => void
   resumeAll: () => void
@@ -140,21 +143,10 @@ export function absolute(nodes: Node[], n: Node) {
   return { x, y }
 }
 
-const sizeOf = (n: Node) => ({
-  width: n.measured?.width ?? n.width ?? (n.style?.width as number) ?? CONSOLE_SIZE.width,
-  height: n.measured?.height ?? n.height ?? (n.style?.height as number) ?? CONSOLE_SIZE.height,
-})
-
-// Slide a rect right past whatever top-level node it would cover, so auto-placed nodes never overlap.
-export function freeSpot(nodes: Node[], rect: { x: number; y: number; width: number; height: number }) {
-  const boxes = nodes.filter((n) => !n.parentId).map((n) => ({ ...n.position, ...sizeOf(n) }))
-  let { x } = rect
-  for (let guard = 0; guard < 200; guard++) {
-    const hit = boxes.find((b) => x < b.x + b.width + 32 && x + rect.width + 32 > b.x && rect.y < b.y + b.height + 32 && rect.y + rect.height + 32 > b.y)
-    if (!hit) break
-    x = hit.x + hit.width + 40
-  }
-  return { x, y: rect.y }
+// Nodes glide to their new place instead of jumping (see `.relayout` in styles.css).
+const glide = () => {
+  document.body.classList.add('relayout')
+  setTimeout(() => document.body.classList.remove('relayout'), 350)
 }
 
 // Resolves true once the process is gone. The server escalates to SIGKILL at 4s, so 5s is enough.
@@ -333,6 +325,7 @@ export const useStore = create<S>((set, get) => {
           .map((n) => (n.parentId === id ? { ...n, parentId: undefined, extent: undefined, position: absolute(w.nodes, n) } : n)),
         edges: w.edges.filter((e) => e.source !== id && e.target !== id),
       }))
+      if (node.parentId) get().fitGroup(node.parentId)
     },
 
     addConsole: (agent, center, extra, parentId, reveal = true) => {
@@ -448,25 +441,13 @@ export const useStore = create<S>((set, get) => {
       if (!ws) return
       const picked = ws.nodes.filter((n) => n.selected && n.type !== 'group' && !n.parentId)
       if (!picked.length) return get().notify('Select consoles on the board first')
-      const pad = 24
-      const head = 44
-      const gap = 28
       // Members are re-laid in a compact grid (reading order), so the frame never swallows
       // a console that is not part of the group.
-      const sorted = [...picked].sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x)
-      const cols = Math.ceil(Math.sqrt(sorted.length))
-      const sizes = sorted.map(sizeOf)
-      const colW = Array.from({ length: cols }, (_, c) => Math.max(...sizes.filter((_, i) => i % cols === c).map((s) => s.width)))
-      const rows = Math.ceil(sorted.length / cols)
-      const rowH = Array.from({ length: rows }, (_, r) => Math.max(...sizes.filter((_, i) => Math.floor(i / cols) === r).map((s) => s.height)))
-      const offsetX = (c: number) => pad + colW.slice(0, c).reduce((a, b) => a + b + gap, 0)
-      const offsetY = (r: number) => pad + head + rowH.slice(0, r).reduce((a, b) => a + b + gap, 0)
-      const width = offsetX(cols) - gap + pad
-      const height = offsetY(rows) - gap + pad
+      const { slots: slot, width, height } = gridLayout(picked)
       const ids = new Set(picked.map((n) => n.id))
       const origin = freeSpot(
         ws.nodes.filter((n) => !ids.has(n.id)),
-        { x: Math.min(...picked.map((n) => n.position.x)) - pad, y: Math.min(...picked.map((n) => n.position.y)) - pad - head, width, height },
+        { x: Math.min(...picked.map((n) => n.position.x)) - GROUP_PAD, y: Math.min(...picked.map((n) => n.position.y)) - GROUP_PAD - GROUP_HEAD, width, height },
       )
       const gid = `g-${uid()}`
       const groupCount = ws.nodes.filter((n) => n.type === 'group').length
@@ -477,13 +458,28 @@ export const useStore = create<S>((set, get) => {
         style: { width, height },
         data: { label: label || `Group ${groupCount + 1}`, color: GROUP_COLORS[groupCount % GROUP_COLORS.length] },
       }
-      const slot = new Map(sorted.map((n, i) => [n.id, { x: offsetX(i % cols), y: offsetY(Math.floor(i / cols)) }]))
       updateWs((w) => ({
         ...w,
         // Parents must come before children in React Flow's node array.
         nodes: [group, ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, selected: false, position: slot.get(n.id)! } : n))],
       }))
       setTimeout(() => get().frame([gid]), 60)
+    },
+
+    // A group always wraps its members: re-lay them in reading order and size the frame to fit.
+    // ponytail: a growing group can overlap its neighbours; push them aside if that bites.
+    fitGroup: (id) => {
+      glide()
+      updateWs((w) => {
+        if (!w.nodes.some((n) => n.id === id && n.type === 'group')) return w
+        const { slots, width, height } = gridLayout(w.nodes.filter((n) => n.parentId === id))
+        return {
+          ...w,
+          nodes: w.nodes.map((n) =>
+            n.id === id ? { ...n, width, height, style: { ...n.style, width, height } } : slots.has(n.id) ? { ...n, position: slots.get(n.id)! } : n,
+          ),
+        }
+      })
     },
 
     ungroup: (id) => get().removeNode(id),

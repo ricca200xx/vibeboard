@@ -539,6 +539,24 @@ button.pill:hover {
 .react-flow__node.selected .group-node {
   border-color: var(--g);
 }
+.group-empty {
+  position: absolute;
+  inset: 44px 16px 16px;
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed color-mix(in srgb, var(--g) 35%, transparent);
+  border-radius: 14px;
+  color: var(--muted);
+  font-size: 13px;
+  pointer-events: none;
+}
+/* Set for a moment while a group re-flows, so its members glide into place. */
+.relayout .react-flow__node {
+  transition:
+    transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
 .group-head {
   position: absolute;
   top: 12px;

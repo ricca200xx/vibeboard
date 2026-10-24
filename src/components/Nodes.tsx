@@ -38,6 +38,7 @@ function GroupNodeImpl({ id, data, selected }: NodeProps<Node<GroupData>>) {
             <X size={13} />
           </button>
         </div>
+        {!members.length && <div className="group-empty">Drag consoles here</div>}
       </div>
     </>
   )
