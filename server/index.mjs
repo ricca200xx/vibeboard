@@ -12,6 +12,7 @@ import { AGENTS, agentById } from '../shared/agents.js'
 import { createLoops } from './loops.mjs'
 import { readTranscript } from './transcript.mjs'
 import { createHelpers } from './helpers.mjs'
+import { createUsage } from './usage.mjs'
 
 const PORT = Number(process.env.PORT) || 4317
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -506,54 +507,15 @@ async function gitAction(cwd, action, message, picked) {
   return { ok: true }
 }
 
-// Claude Code writes one JSONL per session; tokens per day come straight from there.
-// Async and cached per file (mtime+size), so a big log folder never stalls the PTYs.
-const usageCache = new Map() // file -> { key, days }
-async function usageStats() {
-  const base = path.join(os.homedir(), '.claude', 'projects')
-  const days = {}
-  let total = 0
-  const since = Date.now() - 365 * 864e5
-  if (!fs.existsSync(base)) return { days, total }
-  for (const proj of await fs.promises.readdir(base)) {
-    const dir = path.join(base, proj)
-    if (!(await fs.promises.stat(dir)).isDirectory()) continue
-    for (const f of await fs.promises.readdir(dir)) {
-      if (!f.endsWith('.jsonl')) continue
-      const file = path.join(dir, f)
-      const st = await fs.promises.stat(file)
-      if (st.mtimeMs < since) continue
-      const key = `${st.mtimeMs}:${st.size}`
-      let entry = usageCache.get(file)
-      if (entry?.key !== key) {
-        const perFile = {}
-        const seen = new Set() // one line per content block, all carrying the same message usage
-        for (const line of (await fs.promises.readFile(file, 'utf8')).split('\n')) {
-          if (!line.includes('"usage"')) continue
-          try {
-            const e = JSON.parse(line)
-            const u = e.message?.usage
-            if (!u || !e.timestamp) continue
-            const mid = e.message.id || e.requestId
-            if (mid) {
-              if (seen.has(mid)) continue
-              seen.add(mid)
-            }
-            const day = e.timestamp.slice(0, 10)
-            perFile[day] = (perFile[day] || 0) + (u.input_tokens || 0) + (u.output_tokens || 0)
-          } catch {}
-        }
-        entry = { key, days: perFile }
-        usageCache.set(file, entry)
-      }
-      for (const [day, n] of Object.entries(entry.days)) {
-        days[day] = (days[day] || 0) + n
-        total += n
-      }
-    }
-  }
-  return { days, total }
-}
+const profileDirs = (sub) => (isDir(PROFILES_DIR) ? fs.readdirSync(PROFILES_DIR).map((p) => path.join(PROFILES_DIR, p, sub)) : [])
+const usage = createUsage({
+  dataDir: DATA_DIR,
+  env: CLEAN_ENV,
+  shell: SHELL,
+  claudeDirs: claudeProjectDirs,
+  codexDirs: () => [path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions'), ...profileDirs('sessions')],
+  profileEnv: (profile) => (profile && PROFILE.test(profile) ? { CLAUDE_CONFIG_DIR: path.join(PROFILES_DIR, profile) } : {}),
+})
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.png': 'image/png', '.json': 'application/json' }
 
@@ -741,7 +703,14 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (route === 'git') return json(res, 200, await gitInfo(url.searchParams.get('cwd')))
-    if (route === 'usage') return json(res, 200, await usageStats())
+    if (route === 'usage' && id === 'limits') {
+      try {
+        return json(res, 200, await usage.limits(url.searchParams.get('profile') || '', url.searchParams.get('fresh') === '1'))
+      } catch (e) {
+        return json(res, 502, { error: e.message })
+      }
+    }
+    if (route === 'usage') return json(res, 200, await usage.tokens())
     if (route === 'loops') {
       if (req.method === 'GET') return json(res, 200, loops.list())
       if (req.method === 'POST') {

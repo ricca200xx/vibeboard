@@ -8,6 +8,7 @@ import { api, ptyUrl, type Subagent } from '../api'
 import { absolute, agentColor, consoles, launchCache, useStore, workspace, type ConsoleData } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
+import { initials } from './UsagePanel'
 
 const THEME = {
   background: '#151413',
@@ -309,8 +310,8 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
             </span>
           )}
           {account && (
-            <span className="badge" title="Runs on this account's own sign-in">
-              {account.name}
+            <span className="badge acct" title={`Runs on ${account.name}'s own sign-in`}>
+              {initials(account.name)}
             </span>
           )}
           {data.role && <span className="role">{data.role}</span>}

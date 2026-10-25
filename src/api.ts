@@ -30,6 +30,12 @@ export type GitInfo = {
   remote: string | null
   commits: { hash: string; subject: string; author: string; when: string }[]
 }
+// Tokens per local day as [input, output, cache reads + writes], from one agent's session logs.
+export type AgentUsage = { days: Record<string, [number, number, number]>; models: Record<string, number>; sessions: number; longestMs: number; first: string | null }
+export type Usage = { claude: AgentUsage; codex: AgentUsage; scannedAt: number }
+// What the CLI's own /usage screen shows: limits like "Current session 37% · Resets 1:49am".
+export type Limits = { at: number; limits: { title: string; pct: number; resets: string | null }[]; insights: { pct: number; text: string }[] }
+
 export type Loop = {
   id: string
   name: string
@@ -58,7 +64,8 @@ export const api = {
   git: (cwd: string) => call<GitInfo | null>('GET', `/api/git?cwd=${encodeURIComponent(cwd)}`),
   gitAction: (action: 'commit' | 'push' | 'pull' | 'message', cwd: string, message?: string, files?: string[]) =>
     call<{ ok?: boolean; message?: string }>('POST', `/api/git/${action}`, { cwd, message, files }),
-  usage: () => call<{ days: Record<string, number>; total: number }>('GET', '/api/usage'),
+  usage: () => call<Usage>('GET', '/api/usage'),
+  limits: (profile?: string, fresh?: boolean) => call<Limits>('GET', `/api/usage/limits?profile=${encodeURIComponent(profile ?? '')}${fresh ? '&fresh=1' : ''}`),
   claudeSession: (sid: string) => call<{ exists: boolean }>('GET', `/api/claude-session/${sid}`),
   reveal: (cwd: string) => call('POST', '/api/reveal', { cwd }),
   scan: (cwd: string) => call<{ kind: string; title: string; text: string }[]>('POST', '/api/scan', { cwd }),

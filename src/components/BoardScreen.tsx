@@ -45,7 +45,8 @@ import { GitPill } from './GitPanel'
 import { MissionMap } from './MissionMap'
 import { LoopsModal } from './LoopsModal'
 import { MemoryModal } from './MemoryModal'
-import { SettingsModal, UsagePanel } from './Panels'
+import { SettingsModal } from './Panels'
+import { UsagePanel } from './UsagePanel'
 
 const nodeTypes = {
   console: ConsoleNode,

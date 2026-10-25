@@ -1,30 +1,38 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Briefcase, ChevronDown, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
-import { api } from '../api'
 import { consoles, project, useStore } from '../store'
 import { Spark } from './icons'
+import { fmtTokens, loadLimits, loadTokens, useUsage } from './UsagePanel'
 
-export const fmtTokens = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n))
+const todayKey = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export function TopBar() {
   const p = useStore(project)!
   const projects = useStore((s) => s.projects)
   const live = useStore((s) => Object.keys(s.live).length)
+  const hasClaude = useStore((s) => s.installed.includes('claude'))
   const s = useStore.getState()
   const [projMenu, setProjMenu] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
-  const [today, setToday] = useState<number | null>(null)
+  const resets = useUsage((u) => u.limits?.limits[0]?.resets?.replace(/\s*\(.*\)$/, ''))
+  const today = useUsage((u) => {
+    const d = u.tokens?.claude.days[todayKey()]
+    return u.tokens ? (d ? d[0] + d[1] + d[2] : 0) : null
+  })
 
+  // The session's reset time comes from Claude's own /usage, read in the background now and then.
   useEffect(() => {
-    const load = () =>
-      api
-        .usage()
-        .then((u) => setToday(u.days[new Date().toISOString().slice(0, 10)] ?? 0))
-        .catch(() => {})
-    load()
-    const t = setInterval(load, 60_000)
+    loadLimits()
+    loadTokens()
+    const t = setInterval(() => {
+      loadLimits()
+      loadTokens()
+    }, 10 * 60_000)
     return () => clearInterval(t)
-  }, [])
+  }, [hasClaude])
 
   return (
     <div className="topbar">
@@ -114,10 +122,18 @@ export function TopBar() {
       <span className="pill" title="Running consoles">
         <span className="dot" style={{ background: 'var(--live)', width: 7, height: 7 }} /> {live} <span className="muted">live</span>
       </span>
-      <button className="pill" title="Usage" onClick={() => s.set({ modal: 'usage' })}>
+      <button className="pill usage-pill" title="Usage" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
         <Info size={15} color="var(--muted)" />
         <Spark size={14} />
-        <span className="muted">today</span> {today === null ? '–' : fmtTokens(today)}
+        {resets ? (
+          <>
+            <span className="muted">resets</span> <span className="mono">{resets}</span>
+          </>
+        ) : (
+          <>
+            <span className="muted">today</span> {today === null ? '–' : fmtTokens(today)}
+          </>
+        )}
       </button>
       <button className="icon-btn" title="Presets" onClick={() => s.set({ modal: useStore.getState().modal === 'presets' ? null : 'presets' })}>
         <Briefcase size={17} />
