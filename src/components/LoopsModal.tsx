@@ -171,7 +171,7 @@ function Autopilot({ onPick }: { onPick: (t?: Template) => void }) {
 }
 
 // Ticks once a second so the countdown moves.
-function useNow() {
+export function useNow() {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)

@@ -36,6 +36,10 @@ export type Usage = { claude: AgentUsage; codex: AgentUsage; scannedAt: number }
 // What the CLI's own /usage screen shows: limits like "Current session 37% · Resets 1:49am".
 export type Limits = { at: number; limits: { title: string; pct: number; resets: string | null }[]; insights: { pct: number; text: string }[] }
 
+// A repo scan in progress or waiting for review. step: 0 launch, 1 read the repo, 2 write facts, 3 wrap up.
+export type Fact = { kind: string; title: string; text: string }
+export type Scan = { id: string; cwd: string; agent: string; startedAt: number; step: number; facts: Fact[]; status: 'running' | 'done' | 'failed'; error: string | null }
+
 export type Loop = {
   id: string
   name: string
@@ -70,7 +74,8 @@ export const api = {
   limits: (profile?: string, fresh?: boolean) => call<Limits>('GET', `/api/usage/limits?profile=${encodeURIComponent(profile ?? '')}${fresh ? '&fresh=1' : ''}`),
   claudeSession: (sid: string) => call<{ exists: boolean }>('GET', `/api/claude-session/${sid}`),
   reveal: (cwd: string) => call('POST', '/api/reveal', { cwd }),
-  scan: (cwd: string) => call<{ kind: string; title: string; text: string }[]>('POST', '/api/scan', { cwd }),
+  scan: (cwd: string, agent: string) => call<Scan>('POST', '/api/scan', { cwd, agent }),
+  clearScan: (cwd: string) => call('DELETE', `/api/scan?cwd=${encodeURIComponent(cwd)}`),
   plan: (command: string, board: unknown) => call<{ reply: string; actions: import('./planner').PlanAction[] }>('POST', '/api/plan', { command, board }),
   handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string }) =>
     call<{ ok: boolean; duplicate?: boolean }>('POST', '/api/handoff', body),
@@ -92,6 +97,7 @@ export type ServerEvent =
   | { type: 'paused'; id: string; paused: boolean }
   | { type: 'session-id'; id: string; sessionId: string; prompted: boolean }
   | { type: 'loops'; loops: Loop[] }
+  | { type: 'scans'; scans: Scan[] }
   | { type: 'subagents'; id: string; subagents: Subagent[] }
   | { type: 'handoff'; from: string; to: string; state: 'summarizing' | 'sent' | 'failed' }
   | { type: 'helper'; parent: string; id: string; name: string; agent: string; role: string; cwd: string; yolo: boolean }

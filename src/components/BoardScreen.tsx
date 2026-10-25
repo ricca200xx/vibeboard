@@ -36,7 +36,7 @@ import { api } from '../api'
 import { absolute, consoles, project, useStore, workspace, type ConsoleData, type Tool } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
-import { HandoffEdge, HelperEdge } from './HandoffEdge'
+import { HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
 import { GroupNode, ImageNode, InkNode, KanbanNode, NOTE_COLORS, NoteNode, TextNode, WebNode } from './Nodes'
 import { AgentIcon, Spark } from './icons'
 import { TopBar } from './TopBar'
@@ -44,7 +44,7 @@ import { BottomBar } from './BottomBar'
 import { GitPill } from './GitPanel'
 import { MissionMap } from './MissionMap'
 import { LoopsModal } from './LoopsModal'
-import { MemoryModal } from './MemoryModal'
+import { MemoryCard, MemoryModal } from './MemoryModal'
 import { SettingsModal } from './Panels'
 import { UsagePanel } from './UsagePanel'
 
@@ -57,9 +57,10 @@ const nodeTypes = {
   kanban: KanbanNode,
   image: ImageNode,
   ink: InkNode,
+  memory: MemoryCard,
 }
 
-const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge }
+const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge }
 
 const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
 
@@ -225,7 +226,10 @@ function Board() {
         onConnectStart={() => setWiring(true)}
         onConnectEnd={() => setWiring(false)}
         onConnect={(c) => {
-          if (useStore.getState().connectConsoles(c.source, c.target)) useStore.getState().notify('Linked: work passes along whenever the first one finishes')
+          const s = useStore.getState()
+          if (!s.connectConsoles(c.source, c.target)) return
+          const fromCard = ws.nodes.some((n) => n.id === c.source && n.type === 'memory')
+          s.notify(fromCard ? 'Wired: Push on the card types the memory into this console' : 'Linked: work passes along whenever the first one finishes')
         }}
         isValidConnection={(c) => c.source !== c.target}
         defaultViewport={ws.viewport ?? { x: 120, y: 80, zoom: 0.9 }}

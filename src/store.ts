@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from '@xyflow/react'
-import { api, connectEvents, type LiveSession, type Loop, type ServerEvent, type Status } from './api'
+import { api, connectEvents, type LiveSession, type Loop, type Scan, type ServerEvent, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
@@ -42,7 +42,7 @@ export type GitCardData = { cwd: string }
 export type KanbanData = { columns: { title: string; cards: string[] }[] }
 export type InkData = { paths: string[]; color: string }
 
-export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean }
+export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean; scanned?: boolean }
 export type Workspace = { id: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: Viewport }
 export type Project = { path: string; name: string; workspaces: Workspace[]; activeWs: string; memories: Memory[]; openedAt: number }
 export type Preset = { id: string; name: string; agents: string[]; label?: string }
@@ -87,6 +87,7 @@ type S = {
   live: Record<string, LiveSession>
   installed: string[]
   loops: Loop[]
+  scans: Scan[]
   tool: Tool
   spawnAgent: string
   modal: Modal
@@ -197,7 +198,7 @@ function announce(id: string, status: Status) {
 function refuseShell(id: string) {
   const d = findConsole(useStore.getState(), id)?.node.data
   if (d?.agent !== 'shell') return false
-  useStore.getState().notify(`${d.name} is a plain shell and would run the hand-off as commands. Pick an agent console.`)
+  useStore.getState().notify(`${d.name} is a plain shell and would run that text as commands. Pick an agent console.`)
   return true
 }
 
@@ -301,6 +302,7 @@ export const useStore = create<S>((set, get) => {
     live: {},
     installed: ['claude', 'shell'],
     loops: [],
+    scans: [],
     tool: 'select',
     spawnAgent: 'claude',
     modal: null,
@@ -369,6 +371,7 @@ export const useStore = create<S>((set, get) => {
             }
           })
         } else if (e.type === 'loops') set({ loops: e.loops })
+        else if (e.type === 'scans') set({ scans: e.scans })
         else if (e.type === 'handoff')
           set((s) => {
             const handing = { ...s.handing }
@@ -670,6 +673,12 @@ export const useStore = create<S>((set, get) => {
       const ws = workspace(get())
       if (!ws || source === target) return false
       const isConsole = (id: string) => ws.nodes.some((n) => n.id === id && n.type === 'console')
+      // A memory card feeds consoles: its wire only marks where Push delivers.
+      if (ws.nodes.some((n) => n.id === source && n.type === 'memory')) {
+        if (!isConsole(target) || refuseShell(target) || ws.edges.some((e) => e.source === source && e.target === target)) return false
+        updateWs((w) => ({ ...w, edges: [...w.edges, { id: `m-${uid()}`, source, target, type: 'memory' }] }))
+        return true
+      }
       if (!isConsole(source) || !isConsole(target)) return false
       if (refuseShell(target)) return false
       const wires = ws.edges.filter((e) => e.type === 'handoff') // a helper line carries no work

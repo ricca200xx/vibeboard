@@ -85,3 +85,11 @@ export function HandoffEdge({ id, source, target, data, markerEnd, ...geo }: Edg
     </>
   )
 }
+
+// A memory card's wire to a console it feeds; nothing flows until Push.
+export function MemoryEdge({ id, source, target, ...geo }: EdgeProps) {
+  const a = useInternalNode(source)
+  const b = useInternalNode(target)
+  const [path] = getBezierPath(a && b ? facingSides(a, b) : geo)
+  return <BaseEdge id={id} path={path} className="memory-edge" />
+}

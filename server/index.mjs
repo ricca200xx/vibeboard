@@ -4,7 +4,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import pty from 'node-pty'
@@ -13,6 +13,7 @@ import { createLoops } from './loops.mjs'
 import { readTranscript } from './transcript.mjs'
 import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
+import { createScans } from './scan.mjs'
 
 const PORT = Number(process.env.PORT) || 4317
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -277,6 +278,10 @@ function resize(s, cols, rows) {
 }
 
 const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
+const scans = createScans({
+  broadcast,
+  launch: (command, cwd) => spawn(SHELL, ['-lic', command], { cwd, env: CLEAN_ENV, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
+})
 
 // What a helper said last: its final reply when there is a transcript, otherwise its screen.
 const lastWords = (s) => {
@@ -656,19 +661,17 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true })
     }
     if (route === 'scan' && req.method === 'POST') {
-      const { cwd } = JSON.parse(await readBody(req, 64 * 1024))
+      const { cwd, agent } = JSON.parse(await readBody(req, 64 * 1024))
       if (!isDir(cwd)) return json(res, 400, { error: 'not a directory' })
-      const prompt =
-        'Read this repository and write the facts a coding agent must know before working here. ' +
-        'Reply with ONLY a JSON array, no prose, of 4 to 10 objects {"kind": one of "Structure","Commands","Conventions","Gotchas", "title": short, "text": 1-3 sentences}.'
       try {
-        const facts = parseJSON(await askClaude('sonnet', prompt, { cwd, timeout: 240_000 }))
-        if (!Array.isArray(facts) || !facts.every((f) => f && typeof f.title === 'string' && typeof f.text === 'string'))
-          throw new Error('scan reply has the wrong shape')
-        return json(res, 200, facts)
+        return json(res, 200, scans.start(cwd, String(agent || 'claude')))
       } catch (e) {
-        return json(res, 502, { error: e.message })
+        return json(res, 400, { error: e.message })
       }
+    }
+    if (route === 'scan' && req.method === 'DELETE') {
+      scans.clear(url.searchParams.get('cwd'))
+      return json(res, 200, { ok: true })
     }
     if (route === 'plan' && req.method === 'POST') {
       const { command, board } = JSON.parse(await readBody(req, 512 * 1024))
@@ -768,6 +771,7 @@ function attachEvents(ws) {
   eventClients.add(ws)
   ws.send(JSON.stringify({ type: 'sessions', sessions: [...sessions.values()].map(summary) }))
   ws.send(JSON.stringify({ type: 'loops', loops: loops.list() }))
+  ws.send(JSON.stringify({ type: 'scans', scans: scans.list() }))
   ws.on('close', () => eventClients.delete(ws))
 }
 
