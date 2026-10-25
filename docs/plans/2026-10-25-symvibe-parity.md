@@ -1,7 +1,7 @@
 # vibeboard: confronto con Symvibe e piano delle feature
 
-Data: 25 ottobre 2026. Fonte: i 15 video e i 3 frame in `goal of progect/` (video marketing di Symvibe).
-Metodo: osservazione dei frame (≈380, presi a ogni cambio di scena), confrontati con il codice di
+Data: 25 ottobre 2026. Fonte: i 18 video in `goal of progect/` (video marketing di Symvibe).
+Metodo: osservazione dei frame (≈430, presi a ogni cambio di scena), confrontati con il codice di
 `main` (`5e61ff5`). Solo comportamento visibile: nessun codice o asset di Symvibe viene copiato.
 
 Legenda: ✅ c'è già · 🟡 c'è, da migliorare · ❌ manca · ➕ ce l'ha solo vibeboard.
@@ -171,10 +171,13 @@ Symvibe (dal pill usage → "accounts"):
   - nota: 8 colori + personalizzato, porta avanti/indietro, duplica, elimina. **S**
   - testo: colore, 8 font (anche calligrafico), S/M/L/XL, allineamento, opacità, livelli. **M**
 - 🟡 Nota con aspetto "carta" (angolo piegato, font a mano). **S**
-- 🟡 **Penna**: tavolozza colori + 3 spessori. **S**
-- ❌ **Forme** (rettangolo, ellisse) stile disegnato a mano, con testo dentro, e **frecce**. **M**
+- 🟡 **Penna** (video `node-ink`): pannello COLOR con 8 colori + personalizzato e WIDTH con 5
+  spessori; i tratti sono liberi e passano sopra immagini e board (cerchi, frecce, scritte a mano). **S**
+- ❌ **Forme** (rettangolo, ellisse, cornice tratteggiata) stile disegnato a mano, con testo dentro,
+  e **frecce** con etichetta. **M**
   (serve anche agli Studio Diagrammi, §2.17)
-- ❌ **Annotare le immagini** a penna (frame `videoframe_2897.png`). **S** dopo la penna.
+- ❌ **Annotare le immagini** a penna (video `node-ink`): il tratto sopra un'immagine resta sopra
+  di lei. **S** dopo la penna.
 
 ### 2.13 Kanban — 🟡
 Oggi: 3 colonne fisse, card di solo testo, freccia "sposta".
@@ -220,15 +223,26 @@ Symvibe:
   dedicato (nell'app nativa: export PDF della webview).
 
 ### 2.18 Studio Markdown — ❌ (**M**)
-Dal frame `videoframe_4499.png`: elenco dei .md del repo (con ricerca), file aperto con
-"600 words · ~3 min", viste **Reading / Source / Graph** (grafo dei link tra note), "Add to Board",
-"Export PDF". Riusa renderer e PDF di §2.17; il grafo si fa con React Flow che abbiamo già.
+Dal video `studio-markdown`:
+- Modale "Markdown · <repo>" con "Search files" e albero di tutti i .md (cartelle annidate, es.
+  `docs/00-overview/01-what-is-…`), "+" nuova nota.
+- Lettore: breadcrumb `docs › 07-s… › 01-th…`, "972 words · ~4 min", tipografia curata (titoli
+  sottolineati, tabelle, codice inline evidenziato).
+- Viste **Reading / Source / Graph**: Graph = "Link graph · 88 notes", grafo a forza di tutte le
+  note e dei loro link, si apre una nota cliccandola.
+- **Add to Board**: la nota diventa un nodo sulla board (titolo file, contenuto scrollabile).
+  **Export PDF**.
+Riusa renderer e PDF di §2.17; il grafo si fa con React Flow che abbiamo già.
 
 ### 2.19 Studio Diagrammi — ❌ (**M**, dopo le forme)
-Dal frame `videoframe_3215.png`: banner "Claude is drawing ×" e sulla board compare una mappa dei
-componenti ("Client / Runtime", box Browser, Vercel, Next.js Server, next.config.ts) in stile
-disegnato a mano. Come: Claude restituisce un JSON di box, gruppi e frecce; noi lo trasformiamo
-in forme e frecce (§2.12).
+Dal video `studio-diagrams`:
+- Banner "Claude is drawing ×"; la mappa compare a pezzi: prima box vuoti e frecce, poi le etichette.
+- Risultato: titolo ("Votelanding Component Map"), cornici tratteggiate per area (CLIENT, RUNTIME,
+  APP), ellissi e box arrotondati con titolo + sottotitolo (`next.config.ts · build config`),
+  frecce con etichetta (configures, renders, serves, imports, reads, submits), font monospace a mano.
+- Sono forme vere della board: doppio clic modifica il testo, inspector testo (§2.12), si spostano.
+Come: Claude restituisce un JSON di box, gruppi e frecce; noi lo trasformiamo in forme e frecce
+(§2.12) e li posiamo uno alla volta per l'effetto "sta disegnando".
 
 ### 2.20 App nativa macOS — ❌ (**L**)
 Symvibe è un'app nativa: finestra vera, Web Inspector di WebKit, webview senza limiti iframe.
