@@ -30,6 +30,7 @@ export type ConsoleData = {
   resumeNext?: boolean
   role?: string // what this agent is for; travels with every hand-off it receives
   lead?: boolean // a Claude that can bring in helper consoles (server/helpers.mjs)
+  profile?: string // account profile id: runs the CLI on that profile's own sign-in
   epoch: number
 }
 export type HandoffData = { auto: boolean }
@@ -48,7 +49,9 @@ export type Preset = { id: string; name: string; agents: string[]; label?: strin
 
 export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban'
 export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer' | 'presets' | 'settings'
-export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean }
+// A second sign-in of a CLI (its own config folder on disk), so two accounts can run side by side.
+export type Profile = { id: string; name: string; agent: string }
+export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[] }
 
 // Stable fallback so selectors never return a fresh [] (that re-renders forever).
 export const EMPTY: Node[] = []
@@ -515,7 +518,7 @@ export const useStore = create<S>((set, get) => {
       const pos = absolute(ws!.nodes, n)
       const { width } = sizeOf(n)
       const spot = freeSpot(ws!.nodes, { x: pos.x + width + 40, y: pos.y, width: CONSOLE_SIZE.width, height: CONSOLE_SIZE.height })
-      get().addConsole(n.data.agent, { x: spot.x + CONSOLE_SIZE.width / 2, y: spot.y + CONSOLE_SIZE.height / 2 }, { yolo: n.data.yolo, cwd: n.data.cwd })
+      get().addConsole(n.data.agent, { x: spot.x + CONSOLE_SIZE.width / 2, y: spot.y + CONSOLE_SIZE.height / 2 }, { yolo: n.data.yolo, cwd: n.data.cwd, profile: n.data.profile })
     },
 
     // Centre of the view, nudged to free space for a console-sized node.
@@ -648,7 +651,9 @@ export const useStore = create<S>((set, get) => {
       return live.length
     },
 
-    frame: (ids) => get().flow?.fitView({ nodes: ids.map((id) => ({ id })), padding: 0.15, duration: 450, maxZoom: 1 }),
+    // Padding per side keeps the framed nodes clear of the top bar, the side toolbars and the command bar.
+    frame: (ids) =>
+      get().flow?.fitView({ nodes: ids.map((id) => ({ id })), padding: { top: '80px', right: '90px', bottom: '180px', left: '100px' }, duration: 450, maxZoom: 1 }),
 
     // A wire between two consoles: when the source finishes, its work is handed to the target.
     connectConsoles: (source, target) => {

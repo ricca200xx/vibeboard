@@ -1,8 +1,9 @@
 // Single catalog shared by server (command lines) and client (labels, colors).
 // `cmd` is the binary looked up on the user's login-shell PATH; '' means a plain shell.
+// `configEnv` names the variable that moves the CLI's sign-in folder: what lets two accounts run side by side.
 export const AGENTS = [
-  { id: 'claude', name: 'Claude', sub: 'Anthropic', cmd: 'claude', color: '#e8643c', hooks: true, resume: true },
-  { id: 'codex', name: 'Codex', sub: 'OpenAI', cmd: 'codex', color: '#6170f5' },
+  { id: 'claude', name: 'Claude', sub: 'Anthropic', cmd: 'claude', color: '#e8643c', hooks: true, resume: true, configEnv: 'CLAUDE_CONFIG_DIR' },
+  { id: 'codex', name: 'Codex', sub: 'OpenAI', cmd: 'codex', color: '#6170f5', configEnv: 'CODEX_HOME' },
   { id: 'gemini', name: 'Gemini', sub: 'Google', cmd: 'gemini', color: '#4b8bf5' },
   { id: 'aider', name: 'Aider', sub: 'aider', cmd: 'aider', color: '#3fb862' },
   { id: 'cursor', name: 'Cursor', sub: 'cursor-agent', cmd: 'cursor-agent', color: '#d8d8d8' },

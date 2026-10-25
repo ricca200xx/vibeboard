@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { RotateCw, Settings, X } from 'lucide-react'
 import { api } from '../api'
-import { askNotifyPermission, useStore } from '../store'
-import { AGENTS } from '../../shared/agents.js'
+import { askNotifyPermission, useStore, type Profile } from '../store'
+import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentIcon, Spark } from './icons'
 import { fmtTokens } from './TopBar'
 
@@ -65,6 +65,7 @@ export function SettingsModal() {
               <div style={{ color: 'var(--muted)', fontSize: 13 }}>Uses the system voice. Note: browser dictation may send audio to its vendor.</div>
             </span>
           </div>
+          <Accounts />
           <div style={{ display: 'grid', gap: 10 }}>
             <div className="section-label">Terminal font size</div>
             <div className="pills">
@@ -76,6 +77,59 @@ export function SettingsModal() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// Extra sign-ins of the CLIs that can move their config folder (shared/agents.js `configEnv`).
+function Accounts() {
+  const settings = useStore((s) => s.settings)
+  const installed = useStore((s) => s.installed)
+  const [name, setName] = useState('')
+  const choices = AGENTS.filter((a) => a.configEnv && installed.includes(a.id))
+  const [agent, setAgent] = useState(choices[0]?.id ?? 'claude')
+  const profiles = settings.profiles ?? []
+  const save = (next: Profile[]) => useStore.getState().set({ settings: { ...settings, profiles: next } })
+  const add = () => {
+    const n = name.trim().slice(0, 24)
+    if (!n) return
+    save([...profiles, { id: crypto.randomUUID().slice(0, 8), name: n, agent }])
+    setName('')
+  }
+  if (!choices.length) return null
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div className="section-label">Accounts</div>
+      <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+        Another sign-in of {choices.map((a) => a.name).join(' or ')}, so two accounts can run side by side. Pick it from a console's agent menu; the
+        first time, that console asks you to log in.
+      </div>
+      {profiles.map((p) => (
+        <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AgentIcon id={p.agent} size={22} />
+          <span style={{ flex: 1 }}>
+            {agentById(p.agent)?.name} · {p.name}
+          </span>
+          <button className="icon-btn sm" title="Remove this account from the list (its sign-in folder stays on disk)" onClick={() => save(profiles.filter((x) => x.id !== p.id))}>
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <input className="field" style={{ flex: 1 }} placeholder="Account name, e.g. Work" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
+        {choices.length > 1 && (
+          <div className="pills">
+            {choices.map((a) => (
+              <button key={a.id} className={agent === a.id ? 'on' : ''} onClick={() => setAgent(a.id)}>
+                {a.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <button className="btn" onClick={add} disabled={!name.trim()}>
+          Add
+        </button>
       </div>
     </div>
   )

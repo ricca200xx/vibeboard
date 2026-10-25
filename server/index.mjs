@@ -19,6 +19,9 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DATA_DIR = process.env.VIBEBOARD_DATA || path.join(os.homedir(), '.vibeboard')
 const STATE_FILE = path.join(DATA_DIR, 'state.json')
 const HOOKS_FILE = path.join(DATA_DIR, 'claude-hooks.json')
+// One sign-in folder per account profile; the id becomes a path, so it is held to a strict shape.
+const PROFILES_DIR = path.join(DATA_DIR, 'profiles')
+const PROFILE = /^[\w-]{1,40}$/
 const SHELL = process.env.SHELL || '/bin/zsh'
 const MAX_BUF = 512 * 1024
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -151,12 +154,16 @@ function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
   return parts.map(shq).join(' ')
 }
 
-function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead }) {
+function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead, profile }) {
   const agent = agentById(agentId)
   if (!agent) throw new Error(`unknown agent ${agentId}`)
   // A project folder that has gone away must not quietly become $HOME (maybe in YOLO).
   if (cwd && !isDir(cwd)) throw new Error(`folder not found: ${cwd}`)
+  if (profile && !PROFILE.test(profile)) throw new Error(`bad profile name: ${profile}`)
   const dir = cwd || os.homedir()
+  // A profile's first run finds an empty folder, and the CLI asks to sign in right there in the console.
+  const account = profile && agent.configEnv ? { [agent.configEnv]: path.join(PROFILES_DIR, profile) } : {}
+  for (const d of Object.values(account)) fs.mkdirSync(d, { recursive: true })
   // Agents run through a login+interactive shell so they see the same PATH as iTerm.
   const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { id, sessionId, resume, yolo, lead })}`] : ['-l']
   const p = pty.spawn(SHELL, args, {
@@ -164,9 +171,9 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
     cols: cols || 100,
     rows: rows || 30,
     cwd: dir,
-    env: { ...CLEAN_ENV, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
+    env: { ...CLEAN_ENV, ...account, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, yolo: !!yolo, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
+  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     s.lastOutputAt = Date.now()
@@ -321,13 +328,17 @@ async function askClaude(model, prompt, opts) {
 
 // ---------- hand-off: one agent's work, summarised, becomes the next agent's prompt ----------
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-B]|[\x00-\x08\x0b-\x1f]/g
-const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects')
+// Where Claude keeps transcripts: the default sign-in plus one folder per account profile.
+const claudeProjectDirs = () => [
+  path.join(os.homedir(), '.claude', 'projects'),
+  ...(isDir(PROFILES_DIR) ? fs.readdirSync(PROFILES_DIR).map((p) => path.join(PROFILES_DIR, p, 'projects')) : []),
+]
 
 // What the outgoing agent did. Claude's own transcript is clean text; any other CLI only has its
 // screen, so that is used with the escape codes stripped (and has no final reply to quote).
 function conversationText(s, max = 15000) {
   const file = s.transcript && path.resolve(s.transcript)
-  if (file && file.startsWith(CLAUDE_PROJECTS + path.sep) && file.endsWith('.jsonl') && fs.existsSync(file)) {
+  if (file && claudeProjectDirs().some((d) => file.startsWith(d + path.sep)) && file.endsWith('.jsonl') && fs.existsSync(file)) {
     const { lines, lastReply } = readTranscript(fs.readFileSync(file, 'utf8').split('\n').slice(-400).join('\n'))
     if (lines.length) return { context: lines.join('\n').slice(-max), lastReply: lastReply.slice(0, 6000) }
   }
@@ -590,8 +601,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { path: dir, parent: path.dirname(dir), home: os.homedir(), dirs, isRepo: fs.existsSync(path.join(dir, '.git')) })
     }
     if (route === 'claude-session' && id && UUID.test(id)) {
-      const base = path.join(os.homedir(), '.claude', 'projects')
-      const exists = fs.existsSync(base) && fs.readdirSync(base).some((d) => fs.existsSync(path.join(base, d, `${id}.jsonl`)))
+      const exists = claudeProjectDirs().some((base) => isDir(base) && fs.readdirSync(base).some((d) => fs.existsSync(path.join(base, d, `${id}.jsonl`))))
       return json(res, 200, { exists })
     }
     if (route === 'reveal' && req.method === 'POST') {
@@ -714,6 +724,7 @@ function attachPty(ws, q) {
         resume: q.get('resume'),
         yolo: q.get('yolo') === '1',
         lead: q.get('lead') === '1',
+        profile: q.get('profile') || undefined,
       })
     } catch (e) {
       ws.send(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`)

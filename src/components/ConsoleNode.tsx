@@ -53,7 +53,13 @@ function launchParams(id: string, epoch: number): Record<string, string> {
   if (cached) return cached
   const s = useStore.getState()
   const d = workspace(s)!.nodes.find((n) => n.id === id)!.data as ConsoleData
-  let params: Record<string, string> = { agent: d.agent, cwd: d.cwd, yolo: d.yolo ? '1' : '0', ...(d.lead ? { lead: '1' } : {}) }
+  let params: Record<string, string> = {
+    agent: d.agent,
+    cwd: d.cwd,
+    yolo: d.yolo ? '1' : '0',
+    ...(d.lead ? { lead: '1' } : {}),
+    ...(d.profile ? { profile: d.profile } : {}),
+  }
   if (!s.live[id] && agentById(d.agent)?.resume) {
     if (d.resumeNext && d.lastSessionId) {
       params = { ...params, resume: d.lastSessionId }
@@ -248,6 +254,8 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   const [agentMenu, setAgentMenu] = useState(false)
   const [handMenu, setHandMenu] = useState(false)
   const [exited, setExited] = useState(false)
+  const profiles = useStore((s) => s.settings.profiles) ?? []
+  const account = data.profile ? profiles.find((p) => p.id === data.profile) : undefined
   const status: ConsoleStatus = !live ? 'stopped' : live.paused ? 'paused' : live.status
   const color = agentColor(data.agent)
 
@@ -300,6 +308,11 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
               lead
             </span>
           )}
+          {account && (
+            <span className="badge" title="Runs on this account's own sign-in">
+              {account.name}
+            </span>
+          )}
           {data.role && <span className="role">{data.role}</span>}
           {data.yolo && (
             <span className="badge" style={{ color: 'var(--accent)' }}>
@@ -327,22 +340,26 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
         {agentMenu && (
           <div className="menu nodrag nowheel" style={{ top: 44, left: 8, width: 260, maxHeight: 320, overflow: 'auto' }}>
             <div className="menu-title">Switch agent</div>
-            {AGENTS.map((a) => (
-              <button
-                key={a.id}
-                className="menu-item"
-                onClick={() => {
-                  setAgentMenu(false)
-                  updateData(id, { agent: a.id })
-                  restartConsole(id)
-                }}
-              >
-                <AgentIcon id={a.id} size={28} />
-                <span className="title" style={{ fontSize: 14 }}>
-                  {a.name}
-                </span>
-              </button>
-            ))}
+            {AGENTS.flatMap((a) =>
+              // The default sign-in first, then each extra account of this CLI (Settings › Accounts).
+              [undefined, ...profiles.filter((p) => p.agent === a.id)].map((p) => (
+                <button
+                  key={`${a.id}:${p?.id ?? ''}`}
+                  className="menu-item"
+                  onClick={() => {
+                    setAgentMenu(false)
+                    updateData(id, { agent: a.id, profile: p?.id })
+                    restartConsole(id)
+                  }}
+                >
+                  <AgentIcon id={a.id} size={28} />
+                  <span className="title" style={{ fontSize: 14 }}>
+                    {a.name}
+                    {p && <span style={{ color: 'var(--muted)' }}> · {p.name}</span>}
+                  </span>
+                </button>
+              )),
+            )}
           </div>
         )}
 

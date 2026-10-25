@@ -118,7 +118,7 @@ export function createHelpers({ sessions, spawn, sendPrompt, setStatus, broadcas
       for (let n = 2; team.has(name); n++) name = `${base} ${n}`
       const role = String(args.role || '').trim().slice(0, 300)
       const id = `c-${randomUUID().slice(0, 8)}`
-      const h = spawn({ id, agentId: agent, cwd: lead.cwd, yolo: lead.yolo })
+      const h = spawn({ id, agentId: agent, cwd: lead.cwd, yolo: lead.yolo, profile: lead.profile }) // same account as the lead
       team.set(name, id)
       broadcast({ type: 'helper', parent: lead.id, id, name, agent, role, cwd: h.cwd, yolo: !!lead.yolo })
       await ready(h)

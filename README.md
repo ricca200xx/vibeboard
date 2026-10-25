@@ -25,6 +25,8 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
   whole group, or plain language ("spawn three Claudes in a group called Docs") and a planner turns it
   into board actions. Voice dictation with hold-to-talk.
 - **Resume.** Claude conversations can be picked back up after a restart.
+- **Two accounts of the same CLI.** Add an account in Settings and pick it from a console's agent
+  menu: Claude Code or Codex then run on that account's own sign-in folder, side by side with the default.
 - **Loops.** Send an instruction on a schedule, when an agent goes idle, or when its output matches a
   pattern, until a run limit, a time limit, or a goal (a command that passes, or a judge agent) is met.
 - **Memory.** Per-repo notes (or facts scanned from the repo) pushed into consoles as context.
@@ -67,8 +69,8 @@ the lead's own permission mode (YOLO only if the lead is), and a lead runs at mo
 
 ## Roadmap
 
-1. **More orchestration**: account profiles (two logins of the same CLI), studios (docs, diagrams,
-   code tree), a GitHub commit/push panel, custom executables.
+1. **More orchestration**: studios (docs, diagrams, code tree), a GitHub commit/push panel, custom
+   executables.
 2. **Native macOS app**: a real window with Dock icon, menu bar, shortcuts, notifications, a signed
    `.dmg` and auto-update.
 3. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,

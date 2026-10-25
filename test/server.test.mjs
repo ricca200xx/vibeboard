@@ -84,6 +84,15 @@ test('a console for a folder that is gone is refused, not opened in $HOME', { ti
   assert.ok(!(await sessions()).some((s) => s.id === 't-gone'))
 })
 
+test('an account profile name cannot point outside the profiles folder', async () => {
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws/pty?id=t-prof&agent=shell&cwd=${encodeURIComponent(HOME)}&profile=..%2F..%2Fetc`, { origin: 'http://localhost:5173' })
+  let said = ''
+  ws.on('message', (m) => (said += m))
+  await new Promise((r) => ws.on('close', r))
+  assert.match(said, /bad profile name/)
+  assert.ok(!(await sessions()).some((s) => s.id === 't-prof'))
+})
+
 test('prompts sent back to back reach the console as separate prompts', async () => {
   const ws = await openShell('t-queue')
   await sleep(800)
