@@ -84,7 +84,7 @@ const broadcast = (msg) => {
   for (const c of eventClients) if (c.readyState === 1) c.send(s)
 }
 
-const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()] })
+const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, statusAt: s.statusAt, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()] })
 
 // Claude's own sub-agents (its Task/Agent tool) appear on its console while they run. PreToolUse
 // opens one, PostToolUse closes it; only the last few finished ones are kept.
@@ -125,7 +125,8 @@ function publishSubagents(s) {
 function setStatus(s, status) {
   if (s.status === status) return
   s.status = status
-  broadcast({ type: 'status', id: s.id, status })
+  s.statusAt = Date.now()
+  broadcast({ type: 'status', id: s.id, status, at: s.statusAt })
   loops.onStatus(s, status)
 }
 
@@ -175,7 +176,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
     cwd: dir,
     env: { ...CLEAN_ENV, ...account, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
+  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     s.lastOutputAt = Date.now()

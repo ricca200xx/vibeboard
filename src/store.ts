@@ -339,7 +339,7 @@ export const useStore = create<S>((set, get) => {
           set((s) => {
             const cur = s.live[e.id]
             if (!cur) return {}
-            const next = e.type === 'status' ? { ...cur, status: e.status } : { ...cur, paused: e.paused }
+            const next = e.type === 'status' ? { ...cur, status: e.status, statusAt: e.at } : { ...cur, paused: e.paused }
             return { live: { ...s.live, [e.id]: next } }
           })
           if (e.type === 'status' && before && before !== e.status) {

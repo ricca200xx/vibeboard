@@ -18,7 +18,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 }
 
 export type Subagent = { id: string; type: string; task: string; status: 'running' | 'done'; startedAt: number; endedAt?: number }
-export type LiveSession = { id: string; agent: string; status: Status; cwd: string; paused: boolean; subagents?: Subagent[] }
+export type LiveSession = { id: string; agent: string; status: Status; statusAt?: number; cwd: string; paused: boolean; subagents?: Subagent[] }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
 export type GitInfo = {
   branch: string
@@ -92,7 +92,7 @@ export const ptyUrl = (params: Record<string, string>) => `${wsBase()}/ws/pty?${
 export type ServerEvent =
   | { type: 'sessions'; sessions: LiveSession[] }
   | { type: 'spawn'; session: LiveSession }
-  | { type: 'status'; id: string; status: Status }
+  | { type: 'status'; id: string; status: Status; at?: number }
   | { type: 'exit'; id: string; code: number }
   | { type: 'paused'; id: string; paused: boolean }
   | { type: 'session-id'; id: string; sessionId: string; prompted: boolean }

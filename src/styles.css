@@ -1686,6 +1686,81 @@ textarea.field {
   background: rgba(255, 255, 255, 0.015);
   padding: 4px;
 }
+.mm-card.team {
+  align-items: flex-start;
+}
+.mm-card.team .t {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mm-card .bar {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--line-2);
+  margin-top: 5px;
+  overflow: hidden;
+}
+.mm-card .bar i {
+  display: block;
+  height: 100%;
+  background: var(--working);
+}
+.mm-card .ring-n {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.mm-card .ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mm-side .section-label.plain {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12.5px;
+  margin-bottom: -6px;
+}
+.mm-side .btn.wide {
+  justify-content: center;
+  width: 100%;
+}
+.mm-side .btn.primary.wide {
+  height: 40px;
+}
+.btn.danger {
+  color: #ff6b5a;
+  border-color: rgba(255, 107, 90, 0.4);
+  background: transparent;
+}
+.list-box.stats {
+  padding: 4px 0;
+}
+.list-box.stats > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px;
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+.list-box.stats > div b {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.list-box.stats > div.zero b {
+  color: var(--faint);
+}
+.mm-hint {
+  color: var(--faint);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
 
 /* loops */
 .loops {
