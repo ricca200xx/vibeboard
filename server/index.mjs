@@ -407,18 +407,33 @@ async function gitInfo(cwd) {
   // symbolic-ref also names a branch with no commits yet (a new repo); a detached HEAD falls back to its hash.
   let branch = await runCommand('git', ['-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'])
   if (branch.code !== 0) branch = await runCommand('git', ['-C', cwd, 'rev-parse', '--short', 'HEAD'])
-  const [status, log, remote, counts] = await Promise.all([
-    runCommand('git', ['-C', cwd, 'status', '--porcelain']),
+  const [status, log, remote, counts, numstat, top] = await Promise.all([
+    runCommand('git', ['-C', cwd, 'status', '--porcelain', '-z', '--untracked-files=all']),
     runCommand('git', ['-C', cwd, 'log', '-n', '15', '--format=%h%x1f%s%x1f%an%x1f%cr']),
     runCommand('git', ['-C', cwd, 'remote', 'get-url', 'origin']),
     runCommand('git', ['-C', cwd, 'rev-list', '--left-right', '--count', '@{u}...HEAD']),
+    runCommand('git', ['-C', cwd, 'diff', 'HEAD', '--numstat', '-z', '--no-renames']),
+    runCommand('git', ['-C', cwd, 'rev-parse', '--show-toplevel']),
   ])
-  const lines = status.stdout.split('\n').filter(Boolean)
+  const files = changedFiles(status.stdout)
   const [behind, ahead] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0]
+  // Lines added/removed per file: tracked ones from the diff, a new file counts all its lines.
+  const lines = new Map()
+  for (const rec of numstat.stdout.split('\0')) {
+    const [add, del, p] = rec.split('\t')
+    if (p) lines.set(p, [Number(add) || 0, Number(del) || 0])
+  }
+  for (const f of files.slice(0, 200)) {
+    if (f.code !== '??') continue
+    try {
+      const file = path.join(top.stdout.trim(), f.path)
+      if (fs.statSync(file).size < 512 * 1024) lines.set(f.path, [fs.readFileSync(file, 'utf8').split('\n').filter((l, i, a) => l || i < a.length - 1).length, 0])
+    } catch {}
+  }
   return {
     branch: branch.stdout.trim(),
-    changes: lines.length,
-    files: lines.slice(0, 30).map((l) => ({ code: l.slice(0, 2).trim(), path: l.slice(3) })),
+    changes: files.length,
+    files: files.slice(0, 200).map((f) => ({ ...f, add: lines.get(f.path)?.[0] ?? 0, del: lines.get(f.path)?.[1] ?? 0 })),
     upstream: counts.code === 0, // false: never pushed, so the first push sets it up
     ahead,
     behind,
@@ -433,9 +448,24 @@ async function gitInfo(cwd) {
   }
 }
 
+// `git status --porcelain -z`: "XY path\0", and a rename or copy carries its old path as the next field.
+function changedFiles(out) {
+  const recs = out.split('\0')
+  const files = []
+  for (let i = 0; i < recs.length; i++) {
+    const r = recs[i]
+    if (r.length < 4) continue
+    const code = r.slice(0, 2).trim()
+    const f = { code, path: r.slice(3) }
+    if (/[RC]/.test(r.slice(0, 2))) f.orig = recs[++i]
+    files.push(f)
+  }
+  return files
+}
+
 // The git panel's buttons. Arguments go to git directly (no shell), a credential prompt fails
 // instead of hanging, and pull only fast-forwards: a merge with conflicts is not a button's job.
-async function gitAction(cwd, action, message) {
+async function gitAction(cwd, action, message, picked) {
   if (!isDir(cwd)) throw new Error('not a directory')
   const env = { ...CLEAN_ENV, GIT_TERMINAL_PROMPT: '0' }
   const git = (...args) => runCommand('git', ['-C', cwd, ...args], { env, timeout: 60_000 })
@@ -443,16 +473,31 @@ async function gitAction(cwd, action, message) {
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split('\n').slice(-3).join(' ') || `git exited with ${r.code}`)
     return r
   }
+  // Only files git itself reports as changed may be named: nothing else reaches the command line.
+  let paths = []
+  if (Array.isArray(picked)) {
+    const changed = changedFiles((await git('status', '--porcelain', '-z', '--untracked-files=all')).stdout)
+    const byPath = new Map(changed.map((f) => [f.path, f]))
+    for (const p of picked) {
+      const f = byPath.get(String(p))
+      if (!f) throw new Error(`${String(p).slice(0, 120)} has no changes`)
+      paths.push(f.path, ...(f.orig ? [f.orig] : []))
+    }
+    if (!paths.length) throw new Error('pick at least one file')
+  }
   if (action === 'commit') {
     if (!String(message || '').trim()) throw new Error('write a message first')
-    check(await git('add', '-A'))
-    check(await git('commit', '-m', String(message).trim().slice(0, 2000)))
+    // Status paths are relative to the repo root (cwd may be a subfolder); literal: a name like `*` is no glob.
+    const spec = paths.map((p) => `:(top,literal)${p}`)
+    check(await git('add', '-A', ...(spec.length ? ['--', ...spec] : [])))
+    check(await git('commit', '-m', String(message).trim().slice(0, 2000), ...(spec.length ? ['--', ...spec] : [])))
   } else if (action === 'push') {
     const tracked = (await git('rev-parse', '--abbrev-ref', '@{u}')).code === 0
     check(await (tracked ? git('push') : git('push', '-u', 'origin', 'HEAD')))
   } else if (action === 'pull') check(await git('pull', '--ff-only'))
   else if (action === 'message') {
-    const [stat, diff, untracked] = await Promise.all([git('diff', 'HEAD', '--stat'), git('diff', 'HEAD'), git('ls-files', '--others', '--exclude-standard')])
+    const only = paths.length ? ['--', ...paths.map((p) => `:(top,literal)${p}`)] : []
+    const [stat, diff, untracked] = await Promise.all([git('diff', 'HEAD', '--stat', ...only), git('diff', 'HEAD', ...only), git('ls-files', '--others', '--exclude-standard', ...only)])
     const changes = `${stat.stdout}\nNew files:\n${untracked.stdout}\n${diff.stdout}`.slice(0, 12000)
     if (!stat.stdout.trim() && !untracked.stdout.trim()) throw new Error('nothing to commit')
     const prompt = 'Write a git commit message for these changes: one line, at most 72 characters, conventional-commit style (feat:, fix:, docs:...), no quotes, no preamble.\n\n' + changes
@@ -688,9 +733,9 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (route === 'git' && id && req.method === 'POST') {
-      const { cwd, message } = JSON.parse(await readBody(req, 64 * 1024))
+      const { cwd, message, files } = JSON.parse(await readBody(req, 256 * 1024))
       try {
-        return json(res, 200, await gitAction(cwd, id, message))
+        return json(res, 200, await gitAction(cwd, id, message, files))
       } catch (e) {
         return json(res, 400, { error: e.message })
       }

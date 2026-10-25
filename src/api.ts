@@ -23,7 +23,7 @@ export type Status = 'idle' | 'working' | 'needs' | 'done'
 export type GitInfo = {
   branch: string
   changes: number
-  files: { code: string; path: string }[]
+  files: { code: string; path: string; orig?: string; add: number; del: number }[]
   upstream: boolean
   ahead: number
   behind: number
@@ -56,8 +56,8 @@ export const api = {
   ls: (path?: string) =>
     call<{ path: string; parent: string; home: string; dirs: string[]; isRepo: boolean }>('GET', `/api/ls${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   git: (cwd: string) => call<GitInfo | null>('GET', `/api/git?cwd=${encodeURIComponent(cwd)}`),
-  gitAction: (action: 'commit' | 'push' | 'pull' | 'message', cwd: string, message?: string) =>
-    call<{ ok?: boolean; message?: string }>('POST', `/api/git/${action}`, { cwd, message }),
+  gitAction: (action: 'commit' | 'push' | 'pull' | 'message', cwd: string, message?: string, files?: string[]) =>
+    call<{ ok?: boolean; message?: string }>('POST', `/api/git/${action}`, { cwd, message, files }),
   usage: () => call<{ days: Record<string, number>; total: number }>('GET', '/api/usage'),
   claudeSession: (sid: string) => call<{ exists: boolean }>('GET', `/api/claude-session/${sid}`),
   reveal: (cwd: string) => call('POST', '/api/reveal', { cwd }),
