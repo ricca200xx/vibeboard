@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, ChevronUp, GitBranch, Mic, Minus, Plus, RotateCw, Square, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronUp, GitBranch, Mic, Minus, Plus, RotateCw, Square, X } from 'lucide-react'
 import { api, type GitInfo } from '../api'
 import { consoles, EMPTY, project, useStore, workspace } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
-import { AgentGlyph, AgentIcon } from './icons'
+import { AgentGlyph, AgentIcon, Spark } from './icons'
 import { runPlanner } from '../planner'
 import { TEAMS } from '../teams'
 
@@ -429,6 +429,65 @@ function CommandBar() {
   )
 }
 
+// Commit, push and pull without a terminal: a snapshot needs only a note (or one written from the diff).
+function GitActions({ git, cwd, reload }: { git: GitInfo; cwd: string; reload: () => void }) {
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const notify = useStore((s) => s.notify)
+  const run = async (action: 'commit' | 'push' | 'pull' | 'message', done: string) => {
+    setBusy(action)
+    try {
+      const r = await api.gitAction(action, cwd, message)
+      if (action === 'message') setMessage(r.message ?? '')
+      else {
+        if (action === 'commit') setMessage('')
+        notify(done)
+      }
+    } catch (e) {
+      notify(`Git: ${(e as Error).message}`)
+    } finally {
+      setBusy(null)
+      reload()
+    }
+  }
+  return (
+    <div className="git-actions">
+      {git.changes > 0 && (
+        <>
+          <div className="git-files nowheel">
+            {git.files.map((f) => (
+              <div key={f.path} className="git-file" title={f.path}>
+                <span className={`code c-${f.code === '??' ? 'new' : f.code === 'D' ? 'del' : 'mod'}`}>{f.code === '??' ? 'new' : f.code}</span>
+                <span className="path">{f.path}</span>
+              </div>
+            ))}
+            {git.changes > git.files.length && <div className="git-file muted">and {git.changes - git.files.length} more</div>}
+          </div>
+          <div className="git-row">
+            <input className="field" placeholder="What changed? A short note" value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && message.trim() && run('commit', 'Snapshot saved')} />
+            <button className="icon-btn sm" title="Write the note for me from the changes" disabled={!!busy} onClick={() => run('message', '')}>
+              <Spark size={14} />
+            </button>
+          </div>
+          <button className="btn primary" disabled={!!busy || !message.trim()} onClick={() => run('commit', 'Snapshot saved')}>
+            {busy === 'commit' ? 'Saving…' : busy === 'message' ? 'Writing the note…' : `Save snapshot of ${git.changes} change${git.changes > 1 ? 's' : ''}`}
+          </button>
+        </>
+      )}
+      {git.remote && (
+        <div className="git-row">
+          <button className="btn" disabled={!!busy || (git.upstream && !git.ahead)} onClick={() => run('push', 'Pushed')} title={git.upstream ? 'Send your snapshots to the remote' : 'This branch is not on the remote yet: push sends it there'}>
+            <ArrowUp size={14} /> {busy === 'push' ? 'Pushing…' : git.upstream ? `Push ${git.ahead || ''}` : 'Publish branch'}
+          </button>
+          <button className="btn" disabled={!!busy || !git.upstream} onClick={() => run('pull', 'Up to date')} title="Get the latest from the remote (only when it does not need a merge)">
+            <ArrowDown size={14} /> {busy === 'pull' ? 'Pulling…' : `Pull ${git.behind || ''}`}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function GitPill() {
   const p = useStore(project)!
   const [git, setGit] = useState<GitInfo | null>(null)
@@ -464,6 +523,7 @@ export function GitPill() {
               <X size={14} />
             </button>
           </div>
+          <GitActions git={git} cwd={p.path} reload={load} />
           <div className="section-label" style={{ padding: '6px 16px' }}>
             History {git.commits.length}
           </div>

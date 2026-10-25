@@ -20,7 +20,16 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 export type Subagent = { id: string; type: string; task: string; status: 'running' | 'done'; startedAt: number; endedAt?: number }
 export type LiveSession = { id: string; agent: string; status: Status; cwd: string; paused: boolean; subagents?: Subagent[] }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
-export type GitInfo = { branch: string; changes: number; remote: string | null; commits: { hash: string; subject: string; author: string; when: string }[] }
+export type GitInfo = {
+  branch: string
+  changes: number
+  files: { code: string; path: string }[]
+  upstream: boolean
+  ahead: number
+  behind: number
+  remote: string | null
+  commits: { hash: string; subject: string; author: string; when: string }[]
+}
 export type Loop = {
   id: string
   name: string
@@ -47,6 +56,8 @@ export const api = {
   ls: (path?: string) =>
     call<{ path: string; parent: string; home: string; dirs: string[]; isRepo: boolean }>('GET', `/api/ls${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   git: (cwd: string) => call<GitInfo | null>('GET', `/api/git?cwd=${encodeURIComponent(cwd)}`),
+  gitAction: (action: 'commit' | 'push' | 'pull' | 'message', cwd: string, message?: string) =>
+    call<{ ok?: boolean; message?: string }>('POST', `/api/git/${action}`, { cwd, message }),
   usage: () => call<{ days: Record<string, number>; total: number }>('GET', '/api/usage'),
   claudeSession: (sid: string) => call<{ exists: boolean }>('GET', `/api/claude-session/${sid}`),
   reveal: (cwd: string) => call('POST', '/api/reveal', { cwd }),

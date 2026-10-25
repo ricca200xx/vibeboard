@@ -403,16 +403,25 @@ const isDir = (p) => typeof p === 'string' && path.isAbsolute(p) && fs.existsSyn
 
 async function gitInfo(cwd) {
   if (!isDir(cwd)) return null
-  const branch = await runCommand('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'])
-  if (branch.code !== 0) return null
-  const [status, log, remote] = await Promise.all([
+  if ((await runCommand('git', ['-C', cwd, 'rev-parse', '--git-dir'])).code !== 0) return null
+  // symbolic-ref also names a branch with no commits yet (a new repo); a detached HEAD falls back to its hash.
+  let branch = await runCommand('git', ['-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'])
+  if (branch.code !== 0) branch = await runCommand('git', ['-C', cwd, 'rev-parse', '--short', 'HEAD'])
+  const [status, log, remote, counts] = await Promise.all([
     runCommand('git', ['-C', cwd, 'status', '--porcelain']),
     runCommand('git', ['-C', cwd, 'log', '-n', '15', '--format=%h%x1f%s%x1f%an%x1f%cr']),
     runCommand('git', ['-C', cwd, 'remote', 'get-url', 'origin']),
+    runCommand('git', ['-C', cwd, 'rev-list', '--left-right', '--count', '@{u}...HEAD']),
   ])
+  const lines = status.stdout.split('\n').filter(Boolean)
+  const [behind, ahead] = counts.code === 0 ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0]
   return {
     branch: branch.stdout.trim(),
-    changes: status.stdout.split('\n').filter(Boolean).length,
+    changes: lines.length,
+    files: lines.slice(0, 30).map((l) => ({ code: l.slice(0, 2).trim(), path: l.slice(3) })),
+    upstream: counts.code === 0, // false: never pushed, so the first push sets it up
+    ahead,
+    behind,
     remote: remote.code === 0 ? remote.stdout.trim() : null,
     commits: log.stdout
       .split('\n')
@@ -422,6 +431,34 @@ async function gitInfo(cwd) {
         return { hash, subject, author, when }
       }),
   }
+}
+
+// The git panel's buttons. Arguments go to git directly (no shell), a credential prompt fails
+// instead of hanging, and pull only fast-forwards: a merge with conflicts is not a button's job.
+async function gitAction(cwd, action, message) {
+  if (!isDir(cwd)) throw new Error('not a directory')
+  const env = { ...CLEAN_ENV, GIT_TERMINAL_PROMPT: '0' }
+  const git = (...args) => runCommand('git', ['-C', cwd, ...args], { env, timeout: 60_000 })
+  const check = (r) => {
+    if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split('\n').slice(-3).join(' ') || `git exited with ${r.code}`)
+    return r
+  }
+  if (action === 'commit') {
+    if (!String(message || '').trim()) throw new Error('write a message first')
+    check(await git('add', '-A'))
+    check(await git('commit', '-m', String(message).trim().slice(0, 2000)))
+  } else if (action === 'push') {
+    const tracked = (await git('rev-parse', '--abbrev-ref', '@{u}')).code === 0
+    check(await (tracked ? git('push') : git('push', '-u', 'origin', 'HEAD')))
+  } else if (action === 'pull') check(await git('pull', '--ff-only'))
+  else if (action === 'message') {
+    const [stat, diff, untracked] = await Promise.all([git('diff', 'HEAD', '--stat'), git('diff', 'HEAD'), git('ls-files', '--others', '--exclude-standard')])
+    const changes = `${stat.stdout}\nNew files:\n${untracked.stdout}\n${diff.stdout}`.slice(0, 12000)
+    if (!stat.stdout.trim() && !untracked.stdout.trim()) throw new Error('nothing to commit')
+    const prompt = 'Write a git commit message for these changes: one line, at most 72 characters, conventional-commit style (feat:, fix:, docs:...), no quotes, no preamble.\n\n' + changes
+    return { message: (await askClaude('haiku', prompt, { cwd, timeout: 120_000 })).trim().split('\n')[0] }
+  } else throw new Error(`unknown git action ${action}`)
+  return { ok: true }
 }
 
 // Claude Code writes one JSONL per session; tokens per day come straight from there.
@@ -648,6 +685,14 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, plan)
       } catch (e) {
         return json(res, 502, { error: e.message })
+      }
+    }
+    if (route === 'git' && id && req.method === 'POST') {
+      const { cwd, message } = JSON.parse(await readBody(req, 64 * 1024))
+      try {
+        return json(res, 200, await gitAction(cwd, id, message))
+      } catch (e) {
+        return json(res, 400, { error: e.message })
       }
     }
     if (route === 'git') return json(res, 200, await gitInfo(url.searchParams.get('cwd')))

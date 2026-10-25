@@ -30,6 +30,8 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
 - **Loops.** Send an instruction on a schedule, when an agent goes idle, or when its output matches a
   pattern, until a run limit, a time limit, or a goal (a command that passes, or a judge agent) is met.
 - **Memory.** Per-repo notes (or facts scanned from the repo) pushed into consoles as context.
+- **Git without a terminal.** The branch pill lists what changed, saves a snapshot (commit) with a
+  note you write or Claude writes from the diff, and pushes or pulls (fast-forward only).
 - **Mission map, notes, sketches, web tiles, kanban, usage stats** and multiple workspaces per project.
 
 ## Requirements
@@ -69,8 +71,7 @@ the lead's own permission mode (YOLO only if the lead is), and a lead runs at mo
 
 ## Roadmap
 
-1. **More orchestration**: studios (docs, diagrams, code tree), a GitHub commit/push panel, custom
-   executables.
+1. **Studios**: documents, diagrams and a code tree generated from the repo, onto the board.
 2. **Native macOS app**: a real window with Dock icon, menu bar, shortcuts, notifications, a signed
    `.dmg` and auto-update.
 3. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,
