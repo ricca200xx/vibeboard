@@ -53,7 +53,7 @@ function launchParams(id: string, epoch: number): Record<string, string> {
   if (cached) return cached
   const s = useStore.getState()
   const d = workspace(s)!.nodes.find((n) => n.id === id)!.data as ConsoleData
-  let params: Record<string, string> = { agent: d.agent, cwd: d.cwd, yolo: d.yolo ? '1' : '0' }
+  let params: Record<string, string> = { agent: d.agent, cwd: d.cwd, yolo: d.yolo ? '1' : '0', ...(d.lead ? { lead: '1' } : {}) }
   if (!s.live[id] && agentById(d.agent)?.resume) {
     if (d.resumeNext && d.lastSessionId) {
       params = { ...params, resume: d.lastSessionId }
@@ -293,6 +293,11 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
               }}
             >
               {data.name}
+            </span>
+          )}
+          {data.lead && (
+            <span className="badge" style={{ color: 'var(--lead)' }} title="Brings in helpers on the board when a job splits into parts">
+              lead
             </span>
           )}
           {data.role && <span className="role">{data.role}</span>}

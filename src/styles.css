@@ -16,6 +16,7 @@
   --idle: #8a847c;
   --done: #3ecf8e;
   --live: #3ecf6e;
+  --lead: #a477ff;
   --shadow: 0 18px 50px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
   --font: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
   --mono: 'JetBrains Mono Variable', ui-monospace, Menlo, monospace;
@@ -439,6 +440,13 @@ button.pill:hover {
   text-overflow: ellipsis;
   color: var(--muted);
   font-size: 12.5px;
+}
+
+/* ---------- a lead's helpers ---------- */
+.react-flow__edge-path.helper-edge {
+  stroke: color-mix(in srgb, var(--lead) 60%, transparent);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 5;
 }
 
 /* ---------- hand-off wires between consoles ---------- */

@@ -36,7 +36,7 @@ import { api } from '../api'
 import { absolute, consoles, project, useStore, workspace, type ConsoleData, type Tool } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
-import { HandoffEdge } from './HandoffEdge'
+import { HandoffEdge, HelperEdge } from './HandoffEdge'
 import { GroupNode, ImageNode, InkNode, KanbanNode, NOTE_COLORS, NoteNode, TextNode, WebNode } from './Nodes'
 import { AgentIcon, Spark } from './icons'
 import { TopBar } from './TopBar'
@@ -57,7 +57,7 @@ const nodeTypes = {
   ink: InkNode,
 }
 
-const edgeTypes = { handoff: HandoffEdge }
+const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge }
 
 const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
 

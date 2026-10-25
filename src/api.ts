@@ -70,6 +70,7 @@ export type ServerEvent =
   | { type: 'loops'; loops: Loop[] }
   | { type: 'subagents'; id: string; subagents: Subagent[] }
   | { type: 'handoff'; from: string; to: string; state: 'summarizing' | 'sent' | 'failed' }
+  | { type: 'helper'; parent: string; id: string; name: string; agent: string; role: string; cwd: string; yolo: boolean }
 
 // Reconnects forever: the server restarts under `node --watch` during development.
 export function connectEvents(onEvent: (e: ServerEvent) => void) {

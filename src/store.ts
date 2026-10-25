@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from '@xyflow/react'
-import { api, connectEvents, type LiveSession, type Loop, type Status } from './api'
+import { api, connectEvents, type LiveSession, type Loop, type ServerEvent, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
@@ -29,6 +29,7 @@ export type ConsoleData = {
   resumeOffer?: boolean
   resumeNext?: boolean
   role?: string // what this agent is for; travels with every hand-off it receives
+  lead?: boolean // a Claude that can bring in helper consoles (server/helpers.mjs)
   epoch: number
 }
 export type HandoffData = { auto: boolean }
@@ -206,6 +207,52 @@ export function askNotifyPermission() {
   if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission().catch(() => {})
 }
 
+// A group always wraps its members: re-lay them in reading order and size the frame to fit.
+// ponytail: a growing group can overlap its neighbours; push them aside if that bites.
+function fitted(nodes: Node[], gid: string) {
+  if (!nodes.some((n) => n.id === gid && n.type === 'group')) return nodes
+  const { slots, width, height } = gridLayout(nodes.filter((n) => n.parentId === gid))
+  return nodes.map((n) =>
+    n.id === gid ? { ...n, width, height, style: { ...n.style, width, height } } : slots.has(n.id) ? { ...n, position: slots.get(n.id)! } : n,
+  )
+}
+
+// A lead brought in a helper (server/helpers.mjs), which the server already runs: it joins the
+// lead's group (last in reading order) or sits beside the lead, with a dashed line back to it.
+// Any workspace, not just the open one: the lead may be working while you look elsewhere.
+function addHelper(e: Extract<ServerEvent, { type: 'helper' }>) {
+  const s = useStore.getState()
+  const hit = findConsole(s, e.parent)
+  if (!hit || findConsole(s, e.id)) return // a second tab, or an event seen twice
+  const lead = hit.node
+  const pos = absolute(hit.ws.nodes, lead)
+  const position = lead.parentId
+    ? { x: 0, y: 1e6 } // fitted() puts it in the group's last slot
+    : freeSpot(hit.ws.nodes, { x: pos.x + sizeOf(lead).width + 60, y: pos.y, ...CONSOLE_SIZE })
+  const node: Node<ConsoleData> = {
+    id: e.id,
+    type: 'console',
+    position,
+    style: { ...CONSOLE_SIZE },
+    dragHandle: '.console-head',
+    ...(lead.parentId ? { parentId: lead.parentId } : {}),
+    data: { agent: e.agent, name: e.name, dot: lead.data.dot, cwd: e.cwd, yolo: e.yolo, role: e.role || undefined, epoch: 0 },
+  }
+  const edge: Edge = { id: `k-${e.id}`, source: lead.id, target: e.id, type: 'helper' }
+  glide()
+  useStore.setState((st) => ({
+    projects: st.projects.map((p) => ({
+      ...p,
+      workspaces: p.workspaces.map((w) => {
+        if (w.id !== hit.ws.id) return w
+        const nodes = [...w.nodes, node]
+        return { ...w, nodes: lead.parentId ? fitted(nodes, lead.parentId) : nodes, edges: [...w.edges, edge] }
+      }),
+    })),
+  }))
+  s.notify(`${lead.data.name} brought in ${e.name}`)
+}
+
 // Nodes glide to their new place instead of jumping (see `.relayout` in styles.css).
 const glide = () => {
   document.body.classList.add('relayout')
@@ -322,6 +369,7 @@ export const useStore = create<S>((set, get) => {
           })
         else if (e.type === 'subagents')
           set((s) => (s.live[e.id] ? { live: { ...s.live, [e.id]: { ...s.live[e.id], subagents: e.subagents } } } : {}))
+        else if (e.type === 'helper') addHelper(e)
       })
     },
 
@@ -526,13 +574,14 @@ export const useStore = create<S>((set, get) => {
         used.add(name)
         return name
       }
-      // Hand-offs never go to a plain shell, so a team always runs a real agent.
+      // Hand-offs never go to a plain shell, so a team always runs a real agent; a lead's team
+      // tools exist only for Claude.
       const preferred = get().settings.defaultAgent
       const agent = preferred && preferred !== 'shell' ? preferred : 'claude'
       const ids = get().spawnMany(
-        team.members.map(() => agent),
+        team.members.map((m) => (m.lead ? 'claude' : agent)),
         team.name,
-        team.members.map((m) => ({ name: unique(m.name), role: m.role })),
+        team.members.map((m) => ({ name: unique(m.name), role: m.role, ...(m.lead ? { lead: true } : {}) })),
       )
       for (const [a, b] of team.wires) get().connectConsoles(ids[a], ids[b])
       get().notify(`${team.name}: give ${team.members[0].name} the task, the rest follows`)
@@ -568,19 +617,11 @@ export const useStore = create<S>((set, get) => {
       setTimeout(() => get().frame([gid]), 60)
     },
 
-    // A group always wraps its members: re-lay them in reading order and size the frame to fit.
-    // ponytail: a growing group can overlap its neighbours; push them aside if that bites.
     fitGroup: (id) => {
       glide()
       updateWs((w) => {
-        if (!w.nodes.some((n) => n.id === id && n.type === 'group')) return w
-        const { slots, width, height } = gridLayout(w.nodes.filter((n) => n.parentId === id))
-        return {
-          ...w,
-          nodes: w.nodes.map((n) =>
-            n.id === id ? { ...n, width, height, style: { ...n.style, width, height } } : slots.has(n.id) ? { ...n, position: slots.get(n.id)! } : n,
-          ),
-        }
+        const nodes = fitted(w.nodes, id)
+        return nodes === w.nodes ? w : { ...w, nodes }
       })
     },
 
@@ -616,8 +657,9 @@ export const useStore = create<S>((set, get) => {
       const isConsole = (id: string) => ws.nodes.some((n) => n.id === id && n.type === 'console')
       if (!isConsole(source) || !isConsole(target)) return false
       if (refuseShell(target)) return false
-      if (ws.edges.some((e) => e.source === source && e.target === target)) return false
-      if (wouldCycle(ws.edges, source, target)) {
+      const wires = ws.edges.filter((e) => e.type === 'handoff') // a helper line carries no work
+      if (wires.some((e) => e.source === source && e.target === target)) return false
+      if (wouldCycle(wires, source, target)) {
         get().notify('That would pass work around in a circle. Use a loop for repeating work.')
         return false
       }

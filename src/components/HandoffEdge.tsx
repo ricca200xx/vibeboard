@@ -26,6 +26,14 @@ function facingSides(a: InternalNode, b: InternalNode) {
     : { sourceX: s.cx, sourceY: s.y, sourcePosition: Position.Top, targetX: t.cx, targetY: t.y + t.h, targetPosition: Position.Bottom }
 }
 
+// A lead's helper: a quiet dashed line back to the lead. No pill, there is nothing to set on it.
+export function HelperEdge({ id, source, target, ...geo }: EdgeProps) {
+  const a = useInternalNode(source)
+  const b = useInternalNode(target)
+  const [path] = getBezierPath(a && b ? facingSides(a, b) : geo)
+  return <BaseEdge id={id} path={path} className="helper-edge" />
+}
+
 // A hand-off wire: work flows from the source console to the target. The pill in the middle says
 // when that happens and opens the few things you can do with a wire.
 export function HandoffEdge({ id, source, target, data, markerEnd, ...geo }: EdgeProps<Edge<HandoffData>>) {

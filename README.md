@@ -12,8 +12,15 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
 - **Live status.** Claude Code consoles report *Working*, *Needs you* and *Done* through hooks
   injected per session (your global Claude config is never touched); other agents are tracked by
   output activity.
-- **Groups and teams.** Spawn several agents at once, compose a team from roles, group consoles on the
-  canvas and move them together.
+- **Groups and teams.** Spawn several agents at once or a ready-made team (plan → build → review…),
+  group consoles on the canvas and move them together. A group grows to fit a console dropped into it.
+- **Hand-offs.** Drag a wire from one console to another: when the first finishes, a summary of its
+  work plus its final reply becomes the next one's prompt.
+- **A lead and its helpers.** A lead console (Claude Code) can bring in helper consoles itself when a
+  job splits into parts. They appear on the board in its group, work side by side, and their answers
+  go back to the lead. Claude's own sub-agents show as small cards under their console.
+- **Needs you.** A system notification and a count in the window title when an agent is waiting or
+  done; clicking it jumps to that console.
 - **Command bar.** Type `@Maya fix the failing test` to send a prompt to one console, `@Backend` to a
   whole group, or plain language ("spawn three Claudes in a group called Docs") and a planner turns it
   into board actions. Voice dictation with hold-to-talk.
@@ -55,12 +62,13 @@ Board state, loops and the injected Claude hook settings live in `~/.vibeboard/`
 
 The server listens on `127.0.0.1` only and accepts requests from its own pages (Origin and Host are
 checked, which also blocks DNS rebinding). It has no authentication token, so any program running as
-your user on the same machine can drive the consoles. Don't expose the port.
+your user on the same machine can drive the consoles. Don't expose the port. A lead's helpers run with
+the lead's own permission mode (YOLO only if the lead is), and a lead runs at most six at a time.
 
 ## Roadmap
 
-1. **Orchestration logic**: groups that grow to fit a console dropped into them, connections between
-   consoles so agents can hand work to each other, team templates, "needs you" notifications.
+1. **More orchestration**: account profiles (two logins of the same CLI), studios (docs, diagrams,
+   code tree), a GitHub commit/push panel, custom executables.
 2. **Native macOS app**: a real window with Dock icon, menu bar, shortcuts, notifications, a signed
    `.dmg` and auto-update.
 3. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,

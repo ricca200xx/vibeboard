@@ -183,6 +183,35 @@ test('a hand-off carries one console\'s work to another as a prompt', async () =
   b.close()
 })
 
+test('a lead creates a helper on the board, gives it work and gets its answer back', { timeout: 30000 }, async () => {
+  const lead = await openShell('t-lead')
+  const rpc = (body) => api('POST', '/mcp/t-lead', { jsonrpc: '2.0', ...body })
+  const mcp = async (method, params) => (await (await rpc({ id: 1, method, params })).json()).result
+  const call = (name, args) => mcp('tools/call', { name, arguments: args })
+  assert.equal((await mcp('initialize', { protocolVersion: '2025-06-18' })).serverInfo.name, 'vibeboard')
+  assert.equal((await rpc({ method: 'notifications/initialized' })).status, 202)
+  assert.ok((await mcp('tools/list')).tools.some((t) => t.name === 'create_helper'))
+
+  const unseen = await call('create_helper', { name: 'Echo', task: 'x', agent: 'shell' })
+  assert.ok(unseen.isError && /window is closed/.test(unseen.content[0].text), 'with no window open nobody would see the helper')
+
+  const events = new WebSocket(`ws://127.0.0.1:${PORT}/ws/events`, { origin: 'http://localhost:5173' })
+  const seen = []
+  events.on('message', (m) => seen.push(JSON.parse(String(m))))
+  await new Promise((r) => events.on('open', r))
+  const made = await call('create_helper', { name: 'Echo', task: 'echo HELPER_$((40+2))', agent: 'shell' })
+  assert.ok(!made.isError, made.content[0].text)
+  const helper = seen.find((e) => e.type === 'helper')
+  assert.deepEqual([helper?.parent, helper?.name], ['t-lead', 'Echo'], 'the board is told where to draw it')
+  const answer = await call('wait_for_helpers', { timeout_seconds: 15 })
+  assert.match(answer.content[0].text, /^Echo: idle[\s\S]*HELPER_42/)
+  assert.ok((await call('message_helper', { name: 'Nobody', text: 'hi' })).isError)
+  await api('DELETE', `/api/pty/${helper.id}`)
+  await api('DELETE', '/api/pty/t-lead')
+  events.close()
+  lead.close()
+})
+
 test("a hand-off quotes the agent's final reply, not just a summary of it", () => {
   const jsonl = [
     { type: 'user', message: { content: 'Write a 3-line plan' } },

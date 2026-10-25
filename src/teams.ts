@@ -4,7 +4,7 @@ export type TeamTemplate = {
   id: string
   name: string
   description: string
-  members: { name: string; role: string }[]
+  members: { name: string; role: string; lead?: boolean }[]
   wires: [number, number][] // member index -> member index
 }
 
@@ -13,6 +13,13 @@ const BUILDER = 'Implements what it receives, step by step, and runs the tests b
 const REVIEWER = 'Reviews the work it receives: finds bugs and risks, fixes the small ones, lists the rest.'
 
 export const TEAMS: TeamTemplate[] = [
+  {
+    id: 'lead',
+    name: 'A lead and its helpers',
+    description: 'Give one agent the job. When it splits into parts, it brings in helpers on the board and combines their work.',
+    members: [{ name: 'Lead', role: 'Splits the job, brings in helpers for the parts, checks and combines their work.', lead: true }],
+    wires: [],
+  },
   {
     id: 'build-review',
     name: 'Build, then review',

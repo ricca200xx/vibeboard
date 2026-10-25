@@ -11,6 +11,7 @@ import pty from 'node-pty'
 import { AGENTS, agentById } from '../shared/agents.js'
 import { createLoops } from './loops.mjs'
 import { readTranscript } from './transcript.mjs'
+import { createHelpers } from './helpers.mjs'
 
 const PORT = Number(process.env.PORT) || 4317
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -126,12 +127,23 @@ function setStatus(s, status) {
 // No `=` in the bare set: zsh expands a leading `=word` to a command path.
 const shq = (v) => (/^[\w@%+:,./-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`)
 
-function commandFor(agent, { sessionId, resume, yolo }) {
+const LEAD_PROMPT =
+  'You run inside vibeboard, a board where the user watches every agent. You are the lead: when a job splits into ' +
+  'parts that can run side by side, bring in helpers with the vibeboard create_helper tool instead of sub-agents or ' +
+  'other agent launchers, so the user sees each one on the board. Small jobs you do yourself.'
+
+function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
   const parts = [agent.cmd]
   if (agent.id === 'claude') {
     if (resume && UUID.test(resume)) parts.push('--resume', resume)
     else if (sessionId && UUID.test(sessionId)) parts.push('--session-id', sessionId)
     parts.push('--settings', HOOKS_FILE)
+    // A lead gets the team tools (helpers.mjs), pre-approved: asking leave for each helper defeats the point.
+    // The system-prompt line is what makes it reach for them unprompted, over other ways to run agents.
+    if (lead) {
+      const config = { mcpServers: { vibeboard: { type: 'http', url: `http://127.0.0.1:${PORT}/mcp/${id}` } } }
+      parts.push('--mcp-config', JSON.stringify(config), '--allowedTools', 'mcp__vibeboard', '--append-system-prompt', LEAD_PROMPT)
+    }
     if (yolo) parts.push('--dangerously-skip-permissions')
   } else if (agent.id === 'codex' && yolo) {
     parts.push('--dangerously-bypass-approvals-and-sandbox')
@@ -139,14 +151,14 @@ function commandFor(agent, { sessionId, resume, yolo }) {
   return parts.map(shq).join(' ')
 }
 
-function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo }) {
+function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead }) {
   const agent = agentById(agentId)
   if (!agent) throw new Error(`unknown agent ${agentId}`)
   // A project folder that has gone away must not quietly become $HOME (maybe in YOLO).
   if (cwd && !isDir(cwd)) throw new Error(`folder not found: ${cwd}`)
   const dir = cwd || os.homedir()
   // Agents run through a login+interactive shell so they see the same PATH as iTerm.
-  const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { sessionId, resume, yolo })}`] : ['-l']
+  const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { id, sessionId, resume, yolo, lead })}`] : ['-l']
   const p = pty.spawn(SHELL, args, {
     name: 'xterm-256color',
     cols: cols || 100,
@@ -154,9 +166,10 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
     cwd: dir,
     env: { ...CLEAN_ENV, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, subagents: new Map() }
+  const s = { id, agent, cwd: dir, yolo: !!yolo, pty: p, buf: '', status: 'idle', clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
+    s.lastOutputAt = Date.now()
     for (const c of s.clients) if (c.readyState === 1) c.send(d)
     // A repaint after a resize is not activity: it would flip status and re-match output triggers.
     if (Date.now() < s.quietUntil) return
@@ -172,6 +185,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo })
     clearTimeout(s.idleTimer)
     sessions.delete(id)
     loops.onExit(s)
+    helpers.forget(id)
     for (const c of s.clients) c.close(4000, 'exit')
     broadcast({ type: 'exit', id, code: exitCode })
   })
@@ -255,6 +269,22 @@ function resize(s, cols, rows) {
 }
 
 const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
+
+// What a helper said last: its final reply when there is a transcript, otherwise its screen.
+const lastWords = (s) => {
+  const { context, lastReply } = conversationText(s)
+  return (lastReply || context.slice(-3000)).trim()
+}
+const helpers = createHelpers({
+  sessions,
+  spawn: spawnSession,
+  sendPrompt,
+  setStatus,
+  broadcast,
+  lastWords,
+  hasWindow: () => [...eventClients].some((c) => c.readyState === 1),
+  agentIds: AGENTS.map((a) => a.id),
+})
 
 // ---------- helpers ----------
 function runCommand(cmd, args, opts = {}) {
@@ -453,6 +483,14 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x')
     const parts = url.pathname.split('/').filter(Boolean) // ['api', ...]
+    // A lead's team tools (MCP over plain JSON replies: no event stream, so GET is refused).
+    if (parts[0] === 'mcp' && parts[1]) {
+      if (req.method !== 'POST') return json(res, 405, { error: 'POST only' })
+      const msg = JSON.parse(await readBody(req, 1024 * 1024))
+      const out = Array.isArray(msg) ? (await Promise.all(msg.map((m) => helpers.handle(parts[1], m)))).filter(Boolean) : await helpers.handle(parts[1], msg)
+      if (!out || (Array.isArray(out) && !out.length)) return res.writeHead(202).end()
+      return json(res, 200, out)
+    }
     if (parts[0] !== 'api') return serveStatic(url, res)
     const [, route, id, action] = parts
     if (route === 'state' && req.method === 'GET') {
@@ -473,6 +511,7 @@ const server = http.createServer(async (req, res) => {
       if (s) {
         const idlePrompt = payload.notification_type === 'idle_prompt' || /waiting for your input/i.test(payload.message || '')
         if (payload.transcript_path) s.transcript = String(payload.transcript_path)
+        if (action === 'SessionStart') s.started = true // its TUI takes input now (helpers wait for this)
         trackSubagent(s, action, payload)
         if (action === 'UserPromptSubmit' || action === 'PreToolUse' || action === 'PostToolUse') setStatus(s, 'working')
         else if (action === 'Stop') {
@@ -674,6 +713,7 @@ function attachPty(ws, q) {
         sessionId: q.get('sessionId'),
         resume: q.get('resume'),
         yolo: q.get('yolo') === '1',
+        lead: q.get('lead') === '1',
       })
     } catch (e) {
       ws.send(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`)
