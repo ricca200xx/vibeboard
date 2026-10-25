@@ -9,6 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
+import { readTranscript } from '../server/transcript.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PORT = 4399
@@ -180,6 +181,22 @@ test('a hand-off carries one console\'s work to another as a prompt', async () =
   await api('DELETE', '/api/pty/t-to')
   a.close()
   b.close()
+})
+
+test("a hand-off quotes the agent's final reply, not just a summary of it", () => {
+  const jsonl = [
+    { type: 'user', message: { content: 'Write a 3-line plan' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'Let me look first.' }, { type: 'tool_use', name: 'Read', input: { file: 'a.js' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', content: 'ok' }] } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: '1. add.js\n2. export add\n3. test it' }] } },
+    'not json',
+  ]
+    .map((e) => (typeof e === 'string' ? e : JSON.stringify(e)))
+    .join('\n')
+  const { lines, lastReply } = readTranscript(jsonl)
+  assert.equal(lastReply, '1. add.js\n2. export add\n3. test it')
+  assert.equal(lines.length, 4)
+  assert.equal(readTranscript(jsonl + '\n' + JSON.stringify({ type: 'user', message: { content: 'next' } })).lastReply, '', 'a newer prompt has no reply yet')
 })
 
 test('kill escalates past processes that ignore SIGHUP', async () => {

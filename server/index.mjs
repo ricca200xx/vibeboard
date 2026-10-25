@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws'
 import pty from 'node-pty'
 import { AGENTS, agentById } from '../shared/agents.js'
 import { createLoops } from './loops.mjs'
+import { readTranscript } from './transcript.mjs'
 
 const PORT = Number(process.env.PORT) || 4317
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -293,43 +294,32 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[(
 const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects')
 
 // What the outgoing agent did. Claude's own transcript is clean text; any other CLI only has its
-// screen, so that is used with the escape codes stripped.
+// screen, so that is used with the escape codes stripped (and has no final reply to quote).
 function conversationText(s, max = 15000) {
   const file = s.transcript && path.resolve(s.transcript)
   if (file && file.startsWith(CLAUDE_PROJECTS + path.sep) && file.endsWith('.jsonl') && fs.existsSync(file)) {
-    const lines = []
-    for (const raw of fs.readFileSync(file, 'utf8').split('\n').slice(-400)) {
-      let e
-      try {
-        e = JSON.parse(raw)
-      } catch {
-        continue
-      }
-      if (e.type !== 'user' && e.type !== 'assistant') continue
-      const content = typeof e.message?.content === 'string' ? [{ type: 'text', text: e.message.content }] : e.message?.content || []
-      for (const c of content) {
-        if (c.type === 'text' && c.text?.trim()) lines.push(`${e.type === 'user' ? 'User' : 'Agent'}: ${c.text.trim()}`)
-        else if (c.type === 'tool_use') lines.push(`[${c.name} ${JSON.stringify(c.input).slice(0, 160)}]`)
-      }
-    }
-    if (lines.length) return lines.join('\n').slice(-max)
+    const { lines, lastReply } = readTranscript(fs.readFileSync(file, 'utf8').split('\n').slice(-400).join('\n'))
+    if (lines.length) return { context: lines.join('\n').slice(-max), lastReply: lastReply.slice(0, 6000) }
   }
-  return s.buf.replace(ANSI, '').replace(/\n{3,}/g, '\n\n').slice(-max)
+  return { context: s.buf.replace(ANSI, '').replace(/\n{3,}/g, '\n\n').slice(-max), lastReply: '' }
 }
 
+// The summary gives the next agent the story; the final reply goes in verbatim, because that is
+// usually the deliverable itself (the plan, the findings) and a summary would paraphrase it away.
 async function handoffBrief(s) {
-  const context = conversationText(s)
-  if (process.env.VIBEBOARD_NO_LLM) return context.slice(-2000) // tests: no model call
+  const { context, lastReply } = conversationText(s)
+  const withReply = (brief) => (lastReply ? `${brief}\n\nTheir last message, word for word:\n\n${lastReply}` : brief)
+  if (process.env.VIBEBOARD_NO_LLM) return withReply(context.slice(-2000)) // tests: no model call
   const prompt =
     'One coding agent is handing its work to another. From the session below, write the brief the next agent needs: ' +
     'the goal, what was done (files touched), the current state, open problems and the next steps. ' +
     'At most 180 words, plain text, no preamble.\n\nSession:\n' +
     context
   try {
-    return (await askClaude('haiku', prompt, { cwd: s.cwd, timeout: 120_000 })).trim()
+    return withReply((await askClaude('haiku', prompt, { cwd: s.cwd, timeout: 120_000 })).trim())
   } catch (e) {
     console.error('hand-off summary failed, sending the raw tail:', e.message)
-    return context.slice(-2000)
+    return withReply(context.slice(-2000))
   }
 }
 
