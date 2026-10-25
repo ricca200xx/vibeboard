@@ -43,9 +43,18 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
     broadcast({ type: 'loops', loops: list() })
   }
 
+  // Consoles on the workspace the user has open, as the page last reported (it re-reports every
+  // 20s; a closed page goes stale after a minute). A loop that does not keep running behind other
+  // tabs only fires into these, and owes the rounds it skipped until they are back in view.
+  let visible = { ids: new Set(), at: 0 }
+  const inView = (s) => Date.now() - visible.at < 60_000 && visible.ids.has(s.id)
+  const owed = new Set() // loop ids that skipped a round while out of view
+
   // "All consoles" means all consoles of the loop's project (scope = project folder), never other boards.
-  const targets = (loop, s) => (loop.target?.ids ? loop.target.ids.includes(s.id) : !loop.scope || s.cwd === loop.scope)
+  const mine = (loop, s) => (loop.target?.ids ? loop.target.ids.includes(s.id) : !loop.scope || s.cwd === loop.scope)
+  const targets = (loop, s) => mine(loop, s) && (loop.background !== false || inView(s))
   const targetsOf = (loop) => [...sessions.values()].filter((s) => targets(loop, s))
+  const hiddenTargets = (loop) => [...sessions.values()].some((s) => mine(loop, s) && !targets(loop, s))
   const settled = (s) => s.status === 'idle' || s.status === 'done'
 
   async function goalMet(loop, sample) {
@@ -74,7 +83,8 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
     publish()
   }
 
-  async function fire(loop, candidates) {
+  // `now`: the user pressed run, so idle-only loops send to busy consoles too.
+  async function fire(loop, candidates, now = false) {
     const list = candidates.filter((s) => !inFlight.has(keyOf(loop, s)))
     if (!loop.active || !list.length) return
     for (const s of list) inFlight.add(keyOf(loop, s))
@@ -83,7 +93,7 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
       // The goal check can take minutes: the loop may be gone and the consoles may have moved on.
       if (loops.get(loop.id) !== loop || !loop.active) return
       if (met) return finish(loop, 'goal met')
-      const live = list.filter((s) => sessions.get(s.id) === s && !s.paused && (loop.trigger?.type !== 'idle' || settled(s)))
+      const live = list.filter((s) => sessions.get(s.id) === s && !s.paused && (now || loop.trigger?.type !== 'idle' || settled(s)))
       if (!live.length) return // nothing was sent, so this does not count as a run
       for (const s of live) {
         lastFire.set(keyOf(loop, s), Date.now())
@@ -129,12 +139,20 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
   }
 
   function schedule(loop) {
+    clearInterval(timers.get(loop.id))
+    timers.delete(loop.id)
     if (!loop.active || loop.trigger?.type !== 'schedule') return
+    const every = Math.min(MAX_TIMER, Math.max(60_000, Number(loop.trigger.everyMs) || 0))
+    loop.nextAt = Date.now() + every // what the countdown in the list shows
     timers.set(
       loop.id,
       setInterval(() => {
-        if (!overTime(loop)) fire(loop, targetsOf(loop))
-      }, Math.min(MAX_TIMER, Math.max(60_000, Number(loop.trigger.everyMs) || 0))),
+        loop.nextAt = Date.now() + every
+        if (overTime(loop)) return
+        if (hiddenTargets(loop)) owed.add(loop.id)
+        fire(loop, targetsOf(loop))
+        broadcast({ type: 'loops', loops: list() })
+      }, every),
     )
   }
 
@@ -182,13 +200,15 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
       else if (s.goal.type === 'judge' && typeof s.goal.text === 'string' && s.goal.text.trim()) stop.goal = { type: 'judge', text: s.goal.text }
       else throw new Error('goal needs a command or a description')
     }
-    return { instruction, trigger, target, stop }
+    // Off: the loop pauses while its consoles are on a workspace tab the user is not looking at.
+    const background = input.background !== false
+    const name = String(input.name || '').trim().slice(0, 80) || instruction.trim().split('\n')[0].slice(0, 48)
+    return { name, instruction, trigger, target, stop, background }
   }
 
   function add(input) {
     const loop = {
       id: crypto.randomUUID(),
-      name: String(input.name || 'Loop').slice(0, 80),
       ...validate(input),
       scope: typeof input.scope === 'string' ? input.scope : undefined,
       runs: 0,
@@ -201,10 +221,60 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
     return loop
   }
 
+  // Edited from the list: same id, run count kept, timers restarted on the new settings.
+  function update(id, input) {
+    const loop = loops.get(id)
+    if (!loop) throw new Error('no such loop')
+    Object.assign(loop, validate(input))
+    forget((k) => k.startsWith(`${id}:`))
+    schedule(loop)
+    publish()
+    return loop
+  }
+
+  // The switch in the list. Turning a finished loop back on starts it over.
+  function setActive(id, on) {
+    const loop = loops.get(id)
+    if (!loop) throw new Error('no such loop')
+    if (on && !loop.active) {
+      if (loop.finishedReason !== 'turned off') Object.assign(loop, { runs: 0, startedAt: Date.now() })
+      loop.active = true
+      delete loop.finishedReason
+      schedule(loop)
+      publish()
+    } else if (!on && loop.active) finish(loop, 'turned off')
+    return loop
+  }
+
+  function runNow(id) {
+    const loop = loops.get(id)
+    if (!loop) throw new Error('no such loop')
+    if (!loop.active) throw new Error('turn the loop on first')
+    const list = targetsOf(loop)
+    if (!list.length) throw new Error('none of its consoles is running')
+    fire(loop, list, true)
+    return { ok: true, consoles: list.length }
+  }
+
+  // The page says which consoles are in view; loops that skipped rounds meanwhile catch up once.
+  function setVisible(ids) {
+    visible = { ids: new Set(ids.filter((x) => typeof x === 'string')), at: Date.now() }
+    for (const id of [...owed]) {
+      const loop = loops.get(id)
+      const list = loop?.active ? targetsOf(loop).filter((s) => inView(s)) : []
+      if (!loop?.active) owed.delete(id)
+      if (!list.length) continue
+      owed.delete(id)
+      if (loop.trigger?.type === 'idle') list.filter(settled).forEach((s) => trigger(loop, s))
+      else fire(loop, list)
+    }
+  }
+
   function remove(id) {
     clearInterval(timers.get(id))
     timers.delete(id)
     loops.delete(id)
+    owed.delete(id)
     forget((k) => k.startsWith(`${id}:`))
     publish()
     return { ok: true }
@@ -215,7 +285,9 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
     // A hooked agent goes done -> idle when the user types into it: that is not the agent finishing.
     if (s.agent?.hooks && status === 'idle' && Date.now() - (s.lastInputAt || 0) < 1000) return
     for (const loop of loops.values()) {
-      if (loop.active && loop.trigger?.type === 'idle' && targets(loop, s)) trigger(loop, s)
+      if (!loop.active || loop.trigger?.type !== 'idle' || !mine(loop, s)) continue
+      if (targets(loop, s)) trigger(loop, s)
+      else owed.add(loop.id)
     }
   }
 
@@ -253,5 +325,5 @@ export function createLoops({ sessions, sendPrompt, broadcast, run }) {
     }
   }
 
-  return { list, add, remove, onStatus, onOutput, onExit }
+  return { list, add, update, setActive, runNow, setVisible, remove, onStatus, onOutput, onExit }
 }

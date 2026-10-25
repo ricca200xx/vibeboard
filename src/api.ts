@@ -48,6 +48,8 @@ export type Loop = {
   startedAt: number
   active: boolean
   finishedReason?: string
+  background?: boolean // false: pauses while its consoles are on a workspace tab out of view
+  nextAt?: number // next scheduled round
 }
 
 export const api = {
@@ -73,7 +75,11 @@ export const api = {
   handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string }) =>
     call<{ ok: boolean; duplicate?: boolean }>('POST', '/api/handoff', body),
   addLoop: (loop: Partial<Loop>) => call<Loop>('POST', '/api/loops', loop),
+  updateLoop: (id: string, loop: Partial<Loop>) => call<Loop>('PUT', `/api/loops/${id}`, loop),
+  runLoop: (id: string) => call<{ ok: boolean; consoles: number }>('POST', `/api/loops/${id}/run`, {}),
+  setLoopActive: (id: string, on: boolean) => call<Loop>('POST', `/api/loops/${id}/active`, { on }),
   removeLoop: (id: string) => call('DELETE', `/api/loops/${id}`),
+  visible: (ids: string[]) => call('POST', '/api/visible', { ids }),
 }
 
 export const ptyUrl = (params: Record<string, string>) => `${wsBase()}/ws/pty?${new URLSearchParams(params)}`

@@ -303,6 +303,28 @@ test('idle loop fires once and retires at its run limit', async () => {
   ws.close()
 })
 
+test('a loop that stays with its tab waits out of view, catches up, runs now and switches off', async () => {
+  const ws = await openShell('t-view')
+  await sleep(3500)
+  await api('POST', '/api/visible', { ids: [] })
+  const loop = await (await api('POST', '/api/loops', { instruction: 'echo VIEW_FIRE', trigger: { type: 'idle' }, target: { ids: ['t-view'] }, stop: {}, background: false })).json()
+  assert.equal(loop.name, 'echo VIEW_FIRE', 'a loop without a name is named from its instruction')
+  assert.equal((await api('POST', `/api/loops/${loop.id}/run`, {})).status, 400, 'nothing in view to run into')
+  ws.send(JSON.stringify({ t: 'i', d: 'echo poke\r' })) // goes idle out of view: the round is owed
+  await sleep(4000)
+  assert.ok(!(await tail('t-view')).includes('VIEW_FIRE'), 'fired into a tab nobody is looking at')
+  await api('POST', '/api/visible', { ids: ['t-view'] })
+  assert.ok(await until(async () => (await tail('t-view')).includes('VIEW_FIRE'), 8000), 'owed round never caught up')
+  await api('POST', `/api/loops/${loop.id}/active`, { on: false })
+  assert.equal((await api('POST', `/api/loops/${loop.id}/run`, {})).status, 400, 'a loop switched off does not run')
+  const back = await (await api('POST', `/api/loops/${loop.id}/active`, { on: true })).json()
+  assert.equal(back.active, true)
+  assert.equal((await api('POST', `/api/loops/${loop.id}/run`, {})).status, 200)
+  await api('DELETE', `/api/loops/${loop.id}`)
+  await api('DELETE', '/api/pty/t-view')
+  ws.close()
+})
+
 test('an "all consoles" loop stays inside its own project', async () => {
   const other = fs.mkdtempSync(path.join(HOME, 'other-'))
   const mine = await openShell('t-mine')

@@ -81,6 +81,7 @@ export function BoardScreen() {
           <Zoom />
         </div>
         <ResumeAllToast />
+        <ReportVisible />
         {modal === 'mission' && <MissionMap />}
         {modal === 'loops' && <LoopsModal />}
         {modal === 'memory' && <MemoryModal />}
@@ -366,8 +367,24 @@ function SpawnMenu({ onClose }: { onClose: () => void }) {
   )
 }
 
+// Tells the server which consoles are on screen, for loops that pause behind other tabs.
+function ReportVisible() {
+  const ids = useStore((s) => consoles(workspace(s)?.nodes ?? []).map((n) => n.id).join(','))
+  useEffect(() => {
+    const send = () => api.visible(ids ? ids.split(',') : []).catch(() => {})
+    send()
+    const t = setInterval(send, 20_000)
+    return () => {
+      clearInterval(t)
+      api.visible([]).catch(() => {})
+    }
+  }, [ids])
+  return null
+}
+
 function RightToolbar() {
   const s = useStore.getState()
+  const running = useStore((st) => st.loops.filter((l) => l.active && (!l.scope || l.scope === st.active)).length)
   const items = [
     { icon: <Layers size={18} />, tip: 'Mission map', run: () => s.set({ modal: 'mission' }) },
     {
@@ -394,6 +411,7 @@ function RightToolbar() {
       {items.map((i) => (
         <button key={i.tip} className="tool-btn" data-tip={i.tip} onClick={i.run}>
           {i.icon}
+          {i.tip === 'Loops' && running > 0 && <span className="tool-badge">{running}</span>}
         </button>
       ))}
     </div>

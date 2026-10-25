@@ -711,17 +711,23 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (route === 'usage') return json(res, 200, await usage.tokens())
+    if (route === 'visible' && req.method === 'POST') {
+      const { ids } = JSON.parse(await readBody(req, 256 * 1024))
+      loops.setVisible(Array.isArray(ids) ? ids : [])
+      return json(res, 200, { ok: true })
+    }
     if (route === 'loops') {
       if (req.method === 'GET') return json(res, 200, loops.list())
-      if (req.method === 'POST') {
-        const input = JSON.parse(await readBody(req, 1024 * 1024))
-        try {
-          return json(res, 200, loops.add(input))
-        } catch (e) {
-          return json(res, 400, { error: e.message })
-        }
-      }
       if (req.method === 'DELETE' && id) return json(res, 200, loops.remove(id))
+      const input = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
+      try {
+        if (req.method === 'POST' && !id) return json(res, 200, loops.add(input))
+        if (req.method === 'PUT' && id) return json(res, 200, loops.update(id, input))
+        if (req.method === 'POST' && action === 'run') return json(res, 200, loops.runNow(id))
+        if (req.method === 'POST' && action === 'active') return json(res, 200, loops.setActive(id, !!input.on))
+      } catch (e) {
+        return json(res, 400, { error: e.message })
+      }
     }
     return json(res, 404, { error: 'not found' })
   } catch (e) {

@@ -1831,6 +1831,221 @@ textarea.field {
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+.loop-row.off {
+  opacity: 0.6;
+}
+.loop-row .name {
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loop-row .runs {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--faint);
+  margin-left: 6px;
+}
+.loop-row .what {
+  color: var(--text-2);
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+.loop-row .instr {
+  color: var(--faint);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.loop-row .countdown {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 7px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.loop-row .round-btn.sm {
+  width: 30px;
+  height: 30px;
+}
+.loop-row .round-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.loops-modal {
+  height: min(760px, calc(100vh - 140px));
+}
+.loops-modal .loops {
+  grid-template-columns: minmax(0, 1fr);
+}
+.loops-modal .field-group {
+  display: grid;
+  gap: 10px;
+}
+.loops-modal .hint {
+  color: var(--faint);
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+.loops-modal .toggle-row .hint {
+  font-size: 13px;
+}
+.pill-btn {
+  border-radius: 20px;
+}
+.btn.ghost-plain {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+.tpl-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.tpl-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-2);
+  font-size: 13.5px;
+  white-space: nowrap;
+  flex: none;
+}
+.tpl-chips button svg {
+  color: var(--accent);
+}
+.tpl-chips button.on {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.interval-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.stepper .arrows {
+  display: grid;
+}
+.stepper .arrows button {
+  height: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+.stepper .arrows button:hover {
+  color: var(--accent);
+}
+.loop-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--line);
+}
+.loop-foot .summary {
+  color: #ff8a5c;
+  font-size: 15px;
+}
+.loop-foot .rate {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+}
+.autopilot {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 14px;
+  padding: 30px 28px 34px;
+}
+.autopilot .ico.big {
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.autopilot h3 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+.autopilot p {
+  margin: 0 0 8px;
+  max-width: 600px;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+.tpl-card {
+  padding: 16px 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.015);
+  text-align: left;
+}
+.tpl-card:hover {
+  border-color: rgba(240, 85, 58, 0.55);
+}
+.tpl-card .t {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 600;
+  font-size: 15.5px;
+}
+.tpl-card .t svg {
+  color: var(--accent);
+}
+.tpl-card .s {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 8px;
+  line-height: 1.45;
+}
+.tool-btn .tool-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+}
 
 /* composer */
 .composer {
