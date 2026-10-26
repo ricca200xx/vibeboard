@@ -29,6 +29,7 @@ import {
   Type,
   X,
   Check,
+  Pipette,
   ChevronRight,
   LayoutGrid,
 } from 'lucide-react'
@@ -63,6 +64,12 @@ const nodeTypes = {
 const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge }
 
 const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
+
+// Moved nodes go last, followed by their own children (an image's ink): parents before children.
+const reorder = (nodes: Node[], moves: Map<string, Node>) => {
+  const kids = nodes.filter((n) => n.parentId && moves.has(n.parentId) && !moves.has(n.id))
+  return [...nodes.filter((n) => !moves.has(n.id) && !kids.includes(n)), ...moves.values(), ...kids]
+}
 
 export function BoardScreen() {
   const modal = useStore((s) => s.modal)
@@ -172,7 +179,7 @@ function Board() {
     const moves = new Map<string, Node>()
     const touched = new Set<string>()
     for (const node of dragged) {
-      if (node.type === 'group') continue
+      if (node.type === 'group' || node.type === 'ink') continue // ink stays where it was drawn, never joins a group
       const abs = absolute(nodes, node)
       const cx = abs.x + (node.measured?.width ?? 0) / 2
       const cy = abs.y + (node.measured?.height ?? 0) / 2
@@ -196,7 +203,7 @@ function Board() {
           : {
               ...p,
               workspaces: p.workspaces.map((wsp) =>
-                wsp.id !== p.activeWs ? wsp : { ...wsp, nodes: [...wsp.nodes.filter((n) => !moves.has(n.id)), ...moves.values()] },
+                wsp.id !== p.activeWs ? wsp : { ...wsp, nodes: reorder(wsp.nodes, moves) },
               ),
             },
       ),
@@ -303,9 +310,12 @@ function LeftToolbar() {
           <Monitor size={19} />
         </button>
         {TOOLS_2.map((t) => (
-          <button key={t.tool} className={`tool-btn ${tool === t.tool ? 'active' : ''}`} data-tip={t.tip} onClick={() => pick(t.tool)}>
-            {t.icon}
-          </button>
+          <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
+            <button className={`tool-btn ${tool === t.tool ? 'active' : ''}`} data-tip={tool === t.tool && t.tool === 'ink' ? undefined : t.tip} onClick={() => pick(t.tool)}>
+              {t.icon}
+            </button>
+            {t.tool === 'ink' && tool === 'ink' && <InkPanel />}
+          </span>
         ))}
         <button className="tool-btn" data-tip="Image" onClick={() => fileRef.current?.click()}>
           <Image size={19} />
@@ -327,6 +337,38 @@ function LeftToolbar() {
       />
       {menu && tool === 'spawn' && <SpawnMenu onClose={() => setMenu(false)} />}
     </>
+  )
+}
+
+const INK_COLORS = ['#ece8e2', '#f0553a', '#5fae6a', '#c9a64e', '#ef4444', '#6fd6ee', '#a98bfa', '#5d6a86']
+const INK_WIDTHS = [2, 3, 5, 8, 12]
+
+function InkPanel() {
+  const color = useStore((s) => s.inkColor)
+  const width = useStore((s) => s.inkWidth)
+  const set = useStore((s) => s.set)
+  const custom = !INK_COLORS.includes(color)
+  return (
+    <div className="ink-panel">
+      <div className="section-label">Color</div>
+      <div className="row">
+        {INK_COLORS.map((c) => (
+          <button key={c} className={`swatch ${color === c ? 'on' : ''}`} style={{ background: c }} title={c} onClick={() => set({ inkColor: c })} />
+        ))}
+        <label className={`swatch custom ${custom ? 'on' : ''}`} style={custom ? { background: color } : undefined} title="Custom color">
+          <Pipette size={11} />
+          <input type="color" value={color} onChange={(e) => set({ inkColor: e.target.value })} />
+        </label>
+      </div>
+      <div className="section-label">Width</div>
+      <div className="row">
+        {INK_WIDTHS.map((w) => (
+          <button key={w} className={`width ${width === w ? 'on' : ''}`} title={`${w}px`} onClick={() => set({ inkWidth: w })}>
+            <i style={{ width: Math.max(4, w * 1.2), height: Math.max(4, w * 1.2) }} />
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -441,7 +483,10 @@ function Zoom() {
 function InkLayer() {
   const tool = useStore((s) => s.tool)
   const color = useStore((s) => s.inkColor)
+  const width = useStore((s) => s.inkWidth)
   const flow = useReactFlow()
+  // The stroke lives in a ref: pointer events can arrive faster than React re-renders.
+  const stroke = useRef<{ x: number; y: number }[] | null>(null)
   const [pts, setPts] = useState<{ x: number; y: number }[] | null>(null)
   if (tool !== 'ink') return null
   const toD = (p: { x: number; y: number }[]) => p.map((q, i) => `${i ? 'L' : 'M'}${q.x.toFixed(1)} ${q.y.toFixed(1)}`).join(' ')
@@ -450,29 +495,47 @@ function InkLayer() {
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 15, cursor: 'crosshair' }}
       onPointerDown={(e) => {
         ;(e.target as Element).setPointerCapture(e.pointerId)
-        setPts([{ x: e.clientX, y: e.clientY }])
+        stroke.current = [{ x: e.clientX, y: e.clientY }]
+        setPts(stroke.current)
       }}
-      onPointerMove={(e) => pts && setPts([...pts, { x: e.clientX, y: e.clientY }])}
+      onPointerMove={(e) => {
+        if (!stroke.current) return
+        stroke.current = [...stroke.current, { x: e.clientX, y: e.clientY }]
+        setPts(stroke.current)
+      }}
       onPointerUp={() => {
+        const pts = stroke.current
+        stroke.current = null
         if (pts && pts.length > 1) {
           const f = pts.map((p) => flow.screenToFlowPosition(p))
-          const x0 = Math.min(...f.map((p) => p.x)) - 4
-          const y0 = Math.min(...f.map((p) => p.y)) - 4
-          const x1 = Math.max(...f.map((p) => p.x)) + 4
-          const y1 = Math.max(...f.map((p) => p.y)) + 4
+          const pad = width / 2 + 2
+          const x0 = Math.min(...f.map((p) => p.x)) - pad
+          const y0 = Math.min(...f.map((p) => p.y)) - pad
+          const x1 = Math.max(...f.map((p) => p.x)) + pad
+          const y1 = Math.max(...f.map((p) => p.y)) + pad
+          // A stroke that starts on an image annotates it: it rides along when the image moves.
+          const nodes = workspace(useStore.getState())!.nodes
+          const image = [...nodes].reverse().find((n) => {
+            if (n.type !== 'image') return false
+            const a = absolute(nodes, n)
+            return f[0].x >= a.x && f[0].y >= a.y && f[0].x <= a.x + (n.measured?.width ?? 0) && f[0].y <= a.y + (n.measured?.height ?? 0)
+          })
+          const at = image ? absolute(nodes, image) : { x: 0, y: 0 }
           useStore.getState().addNode({
             id: nid('ink'),
             type: 'ink',
-            position: { x: x0, y: y0 },
+            position: { x: x0 - at.x, y: y0 - at.y },
+            ...(image ? { parentId: image.id } : {}),
+            zIndex: 10, // above images and cards
             width: x1 - x0,
             height: y1 - y0,
-            data: { paths: [toD(f.map((p) => ({ x: p.x - x0, y: p.y - y0 })))], color },
+            data: { paths: [toD(f.map((p) => ({ x: p.x - x0, y: p.y - y0 })))], color, width },
           })
         }
         setPts(null)
       }}
     >
-      {pts && <path d={toD(pts)} fill="none" stroke={color} strokeWidth={3 * flow.getZoom()} strokeLinecap="round" strokeLinejoin="round" />}
+      {pts && <path d={toD(pts)} fill="none" stroke={color} strokeWidth={width * flow.getZoom()} strokeLinecap="round" strokeLinejoin="round" />}
     </svg>
   )
 }

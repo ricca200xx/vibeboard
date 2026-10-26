@@ -202,7 +202,7 @@ function InkNodeImpl({ data, width, height }: NodeProps<Node<InkData>>) {
     <div className="ink-node">
       <svg width={width ?? 10} height={height ?? 10}>
         {data.paths.map((d, i) => (
-          <path key={i} d={d} fill="none" stroke={data.color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          <path key={i} d={d} fill="none" stroke={data.color} strokeWidth={data.width ?? 3} strokeLinecap="round" strokeLinejoin="round" />
         ))}
       </svg>
     </div>

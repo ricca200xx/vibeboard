@@ -40,7 +40,7 @@ export type TextData = { text: string }
 export type WebData = { url: string }
 export type GitCardData = { cwd: string }
 export type KanbanData = { columns: { title: string; cards: string[] }[] }
-export type InkData = { paths: string[]; color: string }
+export type InkData = { paths: string[]; color: string; width?: number }
 
 export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean; scanned?: boolean }
 export type Workspace = { id: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: Viewport }
@@ -96,6 +96,7 @@ type S = {
   presets: Preset[]
   flow: ReactFlowInstance | null
   inkColor: string
+  inkWidth: number
   usageView: UsageView
   usageAgent: string
   handing: Record<string, boolean> // `${from}>${to}` while a hand-off is being summarised
@@ -310,7 +311,8 @@ export const useStore = create<S>((set, get) => {
     settings: { yolo: false, fontSize: 13, defaultAgent: 'claude' },
     presets: DEFAULT_PRESETS,
     flow: null,
-    inkColor: '#e8643c',
+    inkColor: '#f0553a',
+    inkWidth: 3,
     usageView: 'usage',
     usageAgent: 'claude',
     handing: {},
@@ -459,7 +461,7 @@ export const useStore = create<S>((set, get) => {
         ...w,
         // Removing a group frees its members instead of deleting them.
         nodes: w.nodes
-          .filter((n) => n.id !== id)
+          .filter((n) => n.id !== id && !(node.type === 'image' && n.parentId === id)) // an image takes its ink notes along
           .map((n) => (n.parentId === id ? { ...n, parentId: undefined, extent: undefined, position: absolute(w.nodes, n) } : n)),
         edges: w.edges.filter((e) => e.source !== id && e.target !== id),
       }))
