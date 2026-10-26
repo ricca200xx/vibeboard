@@ -36,11 +36,13 @@ import {
   LayoutGrid,
 } from 'lucide-react'
 import { api } from '../api'
+import { addImage, addOrchestrator, insertCard, nid } from '../board'
 import { absolute, consoles, project, useStore, workspace, type ConsoleData, type Tool } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
 import { CommandEdge, HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
 import { OrchestratorNode } from './Orchestrator'
+import { ContextMenu, type MenuAt } from './ContextMenu'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
 import { BoardNode, CalendarNode, ChecklistNode, NEW_BOARD } from './Planner'
@@ -74,7 +76,6 @@ const nodeTypes = {
 
 const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge, command: CommandEdge }
 
-const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
 
 // Moved nodes go last, followed by their own children (an image's ink): parents before children.
 const reorder = (nodes: Node[], moves: Map<string, Node>) => {
@@ -113,39 +114,13 @@ export function BoardScreen() {
   )
 }
 
-function addImage(file: File, at: { x: number; y: number }) {
-  if (!file.type.startsWith('image/')) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    const img = new window.Image()
-    img.onload = () => {
-      const scale = Math.min(1, 480 / Math.max(img.width, img.height))
-      const width = Math.round(img.width * scale)
-      const height = Math.round(img.height * scale)
-      // The whole board is saved on every change: store the picture at 2x its shown size, not the
-      // camera original, or a few photos push the state past the server's body limit.
-      let src = String(reader.result)
-      const store = Math.min(1, 960 / Math.max(img.width, img.height))
-      if (file.type !== 'image/svg+xml' && store < 1) {
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.round(img.width * store)
-        canvas.height = Math.round(img.height * store)
-        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
-        src = canvas.toDataURL('image/webp', 0.85)
-      }
-      useStore.getState().addNode({ id: nid('i'), type: 'image', position: { x: at.x - width / 2, y: at.y - height / 2 }, style: { width, height }, data: { src } })
-    }
-    img.src = String(reader.result)
-  }
-  reader.readAsDataURL(file)
-}
-
 function Board() {
   const ws = useStore(workspace)!
   const tool = useStore((s) => s.tool)
   const flow = useReactFlow()
   const { onNodesChange, onEdgesChange, setViewport, set } = useStore.getState()
   const [wiring, setWiring] = useState(false) // a wire is being dragged: every console becomes a drop target
+  const [menu, setMenu] = useState<MenuAt | null>(null)
 
   useEffect(() => set({ flow }), [flow])
 
@@ -260,6 +235,16 @@ function Board() {
           const s = useStore.getState()
           if (s.tool === 'eraser' && n.type !== 'console' && n.type !== 'group') s.removeNode(n.id)
         }}
+        onPaneContextMenu={(e) => {
+          e.preventDefault()
+          setMenu({ x: e.clientX, y: e.clientY, flow: flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }) })
+        }}
+        onNodeContextMenu={(e, node) => {
+          // Inside a terminal the right click stays the terminal's (copy, paste).
+          if ((e.target as HTMLElement).closest('.xterm, input, textarea')) return
+          e.preventDefault()
+          setMenu({ x: e.clientX, y: e.clientY, flow: flow.screenToFlowPosition({ x: e.clientX, y: e.clientY }), node })
+        }}
         minZoom={0.08}
         maxZoom={2.5}
         panOnScroll
@@ -276,6 +261,7 @@ function Board() {
       >
         <Background variant={BackgroundVariant.Dots} gap={34} size={1.7} color="#38342f" />
       </ReactFlow>
+      {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} />}
     </div>
   )
 }
@@ -472,21 +458,10 @@ function RightToolbar() {
   )
 }
 
-// An orchestrator lands in the middle of the view with Connect already on: wiring is the next step.
-function addOrchestrator() {
-  const s = useStore.getState()
-  const c = s.viewCenter()
-  const id = nid('o')
-  s.addNode({ id, type: 'orchestrator', position: { x: c.x - 190, y: c.y - 230 }, style: { width: 380, height: 460 }, data: {} })
-  s.set({ connecting: id })
-}
-
 // Drops a fresh checklist, board or calendar in the middle of the view.
 function TodoMenu({ onClose }: { onClose: () => void }) {
   const insert = (type: string, width: number, height: number, data: Record<string, unknown>) => {
-    const s = useStore.getState()
-    const c = s.viewCenter()
-    s.addNode({ id: nid(type[0]), type, position: { x: c.x - width / 2, y: c.y - height / 2 }, style: { width, height }, data })
+    insertCard(type, width, height, data)
     onClose()
   }
   return (

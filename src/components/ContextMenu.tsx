@@ -1,0 +1,393 @@
+import { useEffect, useRef, useState } from 'react'
+import type { Node } from '@xyflow/react'
+import {
+  ArrowRight,
+  BringToFront,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  ClipboardPaste,
+  Columns3,
+  Copy,
+  Crosshair,
+  Diamond,
+  Globe,
+  Image,
+  LayoutGrid,
+  ListChecks,
+  Maximize2,
+  Minus,
+  Monitor,
+  MoreHorizontal,
+  Orbit,
+  Pause,
+  Pencil,
+  Play,
+  Plug,
+  Plus,
+  RotateCw,
+  SendToBack,
+  Sparkles,
+  Square,
+  StickyNote,
+  Trash2,
+  Type,
+  Users,
+  X,
+} from 'lucide-react'
+import { api } from '../api'
+import { addImage, addOrchestrator, insertCard, nid } from '../board'
+import { consoles, GROUP_COLORS, useStore, workspace, type ConsoleData, type GroupData, type ShapeKind } from '../store'
+import { agentById } from '../../shared/agents.js'
+import { AgentIcon } from './icons'
+import { Composer } from './BottomBar'
+import { NEW_BOARD } from './Planner'
+import { newSticky, SHAPE_DEFAULTS } from './Shapes'
+import { newWebData } from './WebTile'
+
+type Point = { x: number; y: number }
+// Where the menu opened: on screen (for the menu) and on the board (for what it places).
+export type MenuAt = { x: number; y: number; flow: Point; node?: Node }
+
+export function ContextMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    addEventListener('keydown', key)
+    return () => removeEventListener('keydown', key)
+  }, [onClose])
+  return (
+    <div className="ctx-layer" onMouseDown={(e) => e.target === e.currentTarget && onClose()} onContextMenu={(e) => (e.preventDefault(), onClose())}>
+      {at.node ? <NodeMenu at={at} node={at.node} onClose={onClose} /> : <RadialMenu at={at} onClose={onClose} />}
+    </div>
+  )
+}
+
+// A panel opened from the menu stays on screen whatever corner the click was in.
+function usePanelPos(at: MenuAt, width: number, height: number) {
+  return {
+    left: Math.max(8, Math.min(at.x - 24, innerWidth - width - 8)),
+    top: Math.max(8, Math.min(at.y - 40, innerHeight - height - 8)),
+  }
+}
+
+// ---------- the board: a ring of the usual things around the pointer ----------
+type View = 'ring' | 'agents' | 'shapes' | 'group' | 'more'
+const PETALS: { key: string; label: string; angle: number; icon: React.ReactNode }[] = [
+  { key: 'agents', label: 'Spawn an agent', angle: -90, icon: <Sparkles size={18} /> },
+  { key: 'image', label: 'Image', angle: -30, icon: <Image size={18} /> },
+  { key: 'web', label: 'Web tile', angle: 30, icon: <Globe size={18} /> },
+  { key: 'paste', label: 'Paste', angle: 90, icon: <ClipboardPaste size={18} /> },
+  { key: 'shapes', label: 'Shapes', angle: 150, icon: <Copy size={18} /> },
+  { key: 'group', label: 'Compose a group', angle: 210, icon: <Users size={18} /> },
+]
+const RADIUS = 84
+
+function RadialMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
+  const [view, setView] = useState<View>('ring')
+  const fileRef = useRef<HTMLInputElement>(null)
+  const s = useStore.getState()
+  const done = (fn: () => void) => () => (fn(), onClose())
+
+  const paste = async () => {
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((t) => t.startsWith('image/'))
+        if (type) return addImage(new File([await item.getType(type)], 'pasted', { type }), at.flow)
+      }
+      const text = await navigator.clipboard.readText()
+      if (text.trim()) s.addNode({ id: nid('t'), type: 'text', position: at.flow, data: { text } })
+      else s.notify('The clipboard is empty')
+    } catch {
+      s.notify('The browser did not let vibeboard read the clipboard')
+    }
+  }
+  const pick = (key: string) => {
+    if (key === 'image') return fileRef.current?.click()
+    if (key === 'web') return done(() => s.addNode({ id: nid('w'), type: 'web', position: { x: at.flow.x - 360, y: at.flow.y - 240 }, style: { width: 720, height: 480 }, data: newWebData() }))()
+    if (key === 'paste') return done(() => void paste())()
+    setView(key as View)
+  }
+
+  if (view === 'group') return <GroupPanel at={at} onClose={onClose} onBack={() => setView('ring')} />
+  if (view !== 'ring')
+    return (
+      <Panel at={at} title={view === 'agents' ? 'Spawn an agent' : view === 'shapes' ? 'Shapes' : 'Add to the board'} onBack={() => setView('ring')}>
+        {view === 'agents' && <AgentList onPick={(a) => done(() => s.addConsole(a, at.flow))()} />}
+        {view === 'shapes' && <ShapeList at={at.flow} onDone={onClose} />}
+        {view === 'more' && <MoreList at={at.flow} onDone={onClose} />}
+      </Panel>
+    )
+  return (
+    <div className="radial" style={{ left: at.x, top: at.y }}>
+      {PETALS.map((p, i) => (
+        <button
+          key={p.key}
+          className="petal"
+          title={p.label}
+          style={{
+            left: Math.cos((p.angle * Math.PI) / 180) * RADIUS,
+            top: Math.sin((p.angle * Math.PI) / 180) * RADIUS,
+            animationDelay: `${i * 18}ms`,
+          }}
+          onClick={() => pick(p.key)}
+        >
+          {p.icon}
+        </button>
+      ))}
+      <button className="petal center" title="More" onClick={() => setView('more')}>
+        <MoreHorizontal size={16} />
+        <small>More</small>
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          ;[...(e.target.files ?? [])].forEach((f) => addImage(f, at.flow))
+          onClose()
+        }}
+      />
+    </div>
+  )
+}
+
+function Panel({ at, title, onBack, children, width = 280 }: { at: MenuAt; title: string; onBack?: () => void; children: React.ReactNode; width?: number }) {
+  const pos = usePanelPos(at, width, 380)
+  return (
+    <div className="ctx-panel nowheel" style={{ ...pos, width }}>
+      <div className="ctx-head">
+        {onBack && (
+          <button className="icon-btn sm" onClick={onBack} title="Back">
+            <ChevronLeft size={15} />
+          </button>
+        )}
+        <b>{title}</b>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function GroupPanel({ at, onClose, onBack }: { at: MenuAt; onClose: () => void; onBack: () => void }) {
+  const pos = usePanelPos(at, 500, 520)
+  return (
+    <div className="ctx-composer" style={pos}>
+      <Composer at={at.flow} onClose={onClose} onBack={onBack} />
+    </div>
+  )
+}
+
+function AgentList({ onPick }: { onPick: (agent: string) => void }) {
+  const installed = useStore((s) => s.installed)
+  return (
+    <div className="ctx-list">
+      {installed.map((a) => (
+        <button key={a} onClick={() => onPick(a)}>
+          <AgentIcon id={a} size={24} /> {agentById(a)?.name ?? a}
+          <small>{agentById(a)?.sub}</small>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const SHAPES: { kind: ShapeKind | 'sticky'; label: string; icon: React.ReactNode }[] = [
+  { kind: 'rect', label: 'Rectangle', icon: <Square size={15} /> },
+  { kind: 'ellipse', label: 'Ellipse', icon: <Circle size={15} /> },
+  { kind: 'diamond', label: 'Diamond', icon: <Diamond size={15} /> },
+  { kind: 'line', label: 'Line', icon: <Minus size={15} /> },
+  { kind: 'arrow', label: 'Arrow', icon: <ArrowRight size={15} /> },
+  { kind: 'sticky', label: 'Sticky', icon: <StickyNote size={15} /> },
+]
+
+function ShapeList({ at, onDone }: { at: Point; onDone: () => void }) {
+  const place = (kind: ShapeKind | 'sticky') => {
+    const s = useStore.getState()
+    if (kind === 'sticky') s.addNode(newSticky(at))
+    else if (kind === 'line' || kind === 'arrow')
+      s.addNode({ id: nid('s'), type: 'shape', position: { x: at.x - 90, y: at.y - 12 }, width: 180, height: 24, data: { ...SHAPE_DEFAULTS, kind, points: [0.04, 0.5, 0.96, 0.5] } })
+    else s.addNode({ id: nid('s'), type: 'shape', position: { x: at.x - 80, y: at.y - 50 }, width: 160, height: 100, data: { ...SHAPE_DEFAULTS, kind } })
+    onDone()
+  }
+  return (
+    <div className="ctx-grid">
+      {SHAPES.map((k) => (
+        <button key={k.kind} onClick={() => place(k.kind)}>
+          {k.icon}
+          {k.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function MoreList({ at, onDone }: { at: Point; onDone: () => void }) {
+  const s = useStore.getState()
+  const items: [string, React.ReactNode, () => void][] = [
+    ['Orchestrator', <Orbit size={15} />, () => addOrchestrator(at)],
+    ['Shell console', <Monitor size={15} />, () => s.addConsole('shell', at)],
+    ['Text', <Type size={15} />, () => s.addNode({ id: nid('t'), type: 'text', position: at, data: { text: '' } })],
+    ['Sticky note', <StickyNote size={15} />, () => s.addNode(newSticky(at))],
+    ['Checklist', <ListChecks size={15} />, () => insertCard('checklist', 300, 340, { items: [] }, at)],
+    ['Board (kanban)', <Columns3 size={15} />, () => insertCard('kanban', 1060, 440, structuredClone(NEW_BOARD), at)],
+    ['Calendar', <CalendarDays size={15} />, () => insertCard('calendar', 600, 500, { events: [] }, at)],
+    ['Memory card', <StickyNote size={15} />, () => s.addNode({ id: nid('m'), type: 'memory', position: { x: at.x - 160, y: at.y - 120 }, style: { width: 320 }, data: {} })],
+    ['Fit the board', <Maximize2 size={15} />, () => s.flow?.fitView({ padding: 0.12, duration: 400 })],
+  ]
+  return (
+    <div className="ctx-list">
+      {items.map(([label, icon, run]) => (
+        <button key={label} onClick={() => (run(), onDone())}>
+          {icon} {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ---------- a node: what you can do to that one thing ----------
+function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () => void }) {
+  const [sub, setSub] = useState<'groups' | 'orchs' | 'agents' | 'rename' | 'close' | 'colour' | null>(null)
+  const s = useStore.getState()
+  const ws = workspace(s)!
+  const live = useStore((st) => st.live[node.id])
+  const groups = ws.nodes.filter((n) => n.type === 'group') as Node<GroupData>[]
+  const orchs = ws.nodes.filter((n) => n.type === 'orchestrator')
+  const wiredTo = (oid: string) => ws.edges.some((e) => e.type === 'command' && e.source === oid && e.target === node.id)
+  const run = (fn: () => void) => () => (fn(), onClose())
+  const label = node.type === 'console' ? (node.data as ConsoleData).name : node.type === 'group' ? (node.data as GroupData).label : node.type === 'orchestrator' ? 'Orchestrator' : node.type ?? ''
+
+  if (sub === 'rename')
+    return (
+      <Panel at={at} title={`Rename ${label}`} onBack={() => setSub(null)}>
+        <form
+          className="ctx-rename"
+          onSubmit={(e) => {
+            e.preventDefault()
+            const v = String(new FormData(e.currentTarget).get('name') ?? '').trim()
+            if (v) s.updateData(node.id, node.type === 'group' ? { label: v } : { name: v })
+            onClose()
+          }}
+        >
+          <input name="name" autoFocus defaultValue={label} onFocus={(e) => e.target.select()} />
+          <button className="btn primary sm">Save</button>
+        </form>
+      </Panel>
+    )
+  if (sub === 'groups')
+    return (
+      <Panel at={at} title="Add to group" onBack={() => setSub(null)}>
+        <div className="ctx-list">
+          {groups.map((g) => (
+            <button key={g.id} disabled={node.parentId === g.id} onClick={run(() => s.moveToGroup(node.id, g.id))}>
+              <LayoutGrid size={15} color={g.data.color} /> {g.data.label}
+              <small>{consoles(ws.nodes).filter((n) => n.parentId === g.id).length}</small>
+            </button>
+          ))}
+          {node.parentId && (
+            <button onClick={run(() => s.moveToGroup(node.id, null))}>
+              <X size={15} /> Take it out of its group
+            </button>
+          )}
+          {!groups.length && <p className="ctx-hint">There are no groups on this board yet.</p>}
+        </div>
+      </Panel>
+    )
+  if (sub === 'orchs')
+    return (
+      <Panel at={at} title="Wire to an orchestrator" onBack={() => setSub(null)}>
+        <div className="ctx-list">
+          {orchs.map((o, i) => (
+            <button key={o.id} onClick={run(() => s.toggleWire(o.id, node.id))}>
+              <span className="orb sm" /> {orchs.length > 1 ? `Orchestrator ${i + 1}` : 'Orchestrator'}
+              <small>{wiredTo(o.id) ? 'wired · unwire' : 'wire'}</small>
+            </button>
+          ))}
+          <button onClick={run(() => addOrchestrator({ x: at.flow.x - 460, y: at.flow.y }))}>
+            <Plus size={15} /> New orchestrator
+          </button>
+        </div>
+      </Panel>
+    )
+  if (sub === 'agents')
+    return (
+      <Panel at={at} title={`Add an agent to ${label}`} onBack={() => setSub(null)}>
+        <AgentList onPick={(a) => run(() => (s.addConsole(a, { x: 0, y: 0 }, undefined, node.id, false), s.fitGroup(node.id)))()} />
+      </Panel>
+    )
+  if (sub === 'colour')
+    return (
+      <Panel at={at} title="Colour" onBack={() => setSub(null)} width={240}>
+        <div className="ctx-swatches">
+          {GROUP_COLORS.map((c) => (
+            <button key={c} style={{ background: c }} onClick={run(() => s.updateData(node.id, { color: c }))} />
+          ))}
+        </div>
+      </Panel>
+    )
+  if (sub === 'close')
+    return (
+      <Panel at={at} title={`Close ${label}?`} onBack={() => setSub(null)}>
+        <p className="ctx-hint">Its session stops and the console leaves the board.</p>
+        <div className="ctx-row">
+          <button className="btn ghost-plain sm" onClick={() => setSub(null)}>
+            Cancel
+          </button>
+          <button className="btn primary sm" onClick={run(() => s.removeNode(node.id))}>
+            Close it
+          </button>
+        </div>
+      </Panel>
+    )
+
+  const items: ([string, React.ReactNode, () => void, boolean?] | null)[] =
+    node.type === 'console'
+      ? [
+          ['Rename', <Pencil size={15} />, () => setSub('rename'), true],
+          ['Duplicate', <Copy size={15} />, run(() => s.duplicateConsole(node.id))],
+          ['Restart', <RotateCw size={15} />, run(() => s.restartConsole(node.id))],
+          live ? [live.paused ? 'Resume' : 'Pause', live.paused ? <Play size={15} /> : <Pause size={15} />, run(() => api.signal(node.id, live.paused ? 'SIGCONT' : 'SIGSTOP'))] : null,
+          ['Focus', <Crosshair size={15} />, run(() => s.jumpTo(node.id))],
+          ['Add to group', <LayoutGrid size={15} />, () => setSub('groups'), true],
+          ['Wire to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true],
+          ['Close…', <Trash2 size={15} />, () => setSub('close'), true],
+        ]
+      : node.type === 'group'
+        ? [
+            ['Rename', <Pencil size={15} />, () => setSub('rename'), true],
+            ['Colour', <span className="ctx-dot" style={{ background: (node.data as GroupData).color }} />, () => setSub('colour'), true],
+            ['Add an agent', <Plus size={15} />, () => setSub('agents'), true],
+            ['Frame it', <Crosshair size={15} />, run(() => s.frame([node.id]))],
+            ['Wire to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true],
+            ['Ungroup', <X size={15} />, run(() => s.ungroup(node.id))],
+          ]
+        : node.type === 'orchestrator'
+          ? [
+              ['Connect consoles', <Plug size={15} />, run(() => s.set({ connecting: node.id }))],
+              ['Remove', <Trash2 size={15} />, run(() => s.removeNode(node.id))],
+            ]
+          : [
+              ['Duplicate', <Copy size={15} />, run(() => s.duplicateNode(node.id))],
+              ['Bring to front', <BringToFront size={15} />, run(() => s.reorderNode(node.id, 'front'))],
+              ['Send to back', <SendToBack size={15} />, run(() => s.reorderNode(node.id, 'back'))],
+              ['Delete', <Trash2 size={15} />, run(() => s.removeNode(node.id))],
+            ]
+  const pos = usePanelPos(at, 240, items.length * 36 + 50)
+  return (
+    <div className="ctx-panel nowheel" style={{ ...pos, width: 240 }}>
+      <div className="ctx-head">
+        <b>{label}</b>
+      </div>
+      <div className="ctx-list">
+        {items.filter((x) => x !== null).map(([text, icon, fn, more]) => (
+          <button key={text} onClick={fn}>
+            {icon} {text}
+            {more && <ChevronRight size={14} className="more" />}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, ChevronUp, Mic, Minus, Plus, RotateCw, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronLeft, ChevronUp, Mic, Minus, Plus, RotateCw, Square, X } from 'lucide-react'
 import { consoles, EMPTY, useStore, workspace } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
@@ -72,7 +72,8 @@ export function BottomBar() {
   )
 }
 
-function Composer({ onClose }: { onClose: () => void }) {
+// The group composer. From the right-click menu it lands where you clicked and has a way back.
+export function Composer({ onClose, onBack, at }: { onClose: () => void; onBack?: () => void; at?: { x: number; y: number } }) {
   const defaultAgent = useStore((s) => s.settings.defaultAgent)
   const [name, setName] = useState('Team')
   const [role, setRole] = useState('General')
@@ -84,6 +85,11 @@ function Composer({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="menu composer nowheel">
+      {onBack && (
+        <button className="composer-back" onClick={onBack}>
+          <ChevronLeft size={15} /> Compose group
+        </button>
+      )}
       <div className="name">
         <span className="dot" style={{ background: roleColor }} />
         <input value={name} onChange={(e) => setName(e.target.value)} onFocus={(e) => e.target.select()} />
@@ -138,7 +144,7 @@ function Composer({ onClose }: { onClose: () => void }) {
         <button
           className="spawn-btn"
           onClick={() => {
-            useStore.getState().spawnMany(slots, name.trim() || role)
+            useStore.getState().spawnMany(slots, name.trim() || role, undefined, at)
             onClose()
           }}
         >

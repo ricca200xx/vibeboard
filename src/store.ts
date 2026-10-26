@@ -137,11 +137,12 @@ type S = {
   restartConsole: (id: string, fresh?: boolean) => Promise<void>
   resumeConsole: (id: string) => Promise<void>
   duplicateConsole: (id: string) => void
-  spawnMany: (agents: string[], label?: string, extras?: Partial<ConsoleData>[]) => string[]
+  spawnMany: (agents: string[], label?: string, extras?: Partial<ConsoleData>[], at?: { x: number; y: number }) => string[]
   spawnTeam: (team: TeamTemplate) => void
   groupSelected: (label?: string) => void
   fitGroup: (id: string) => void
   ungroup: (id: string) => void
+  moveToGroup: (id: string, gid: string | null) => void
   pauseAll: () => void
   resumeAll: () => void
   sendTo: (ids: string[], text: string) => number
@@ -579,13 +580,13 @@ export const useStore = create<S>((set, get) => {
       return { x: spot.x + width / 2, y: spot.y + height / 2 }
     },
 
-    spawnMany: (agents, label, extras) => {
+    spawnMany: (agents, label, extras, at) => {
       if (!agents.length) return []
       const cols = agents.length <= 4 ? Math.min(2, agents.length) : agents.length <= 9 ? 3 : 4
       const rows = Math.ceil(agents.length / cols)
       const gap = 60 // same as a group's re-flow (layout.ts), so the first drop doesn't reshuffle it
       const { width, height } = CONSOLE_SIZE
-      const center = get().viewCenter()
+      const center = at ?? get().viewCenter()
       const pad = 24
       const head = label ? 44 : 0
       const totalW = cols * width + (cols - 1) * gap
@@ -678,6 +679,21 @@ export const useStore = create<S>((set, get) => {
     },
 
     ungroup: (id) => get().removeNode(id),
+
+    // Put a console in a group (or take it out with null); both groups re-flow.
+    moveToGroup: (id, gid) => {
+      glide()
+      updateWs((w) => {
+        const n = w.nodes.find((x) => x.id === id)
+        const g = gid ? w.nodes.find((x) => x.id === gid && x.type === 'group') : undefined
+        if (!n || (gid && !g) || n.parentId === (gid ?? undefined)) return w
+        const abs = absolute(w.nodes, n)
+        const moved = g ? { ...n, parentId: g.id, position: { x: abs.x - g.position.x, y: abs.y - g.position.y } } : { ...n, parentId: undefined, extent: undefined, position: abs }
+        let nodes = [...w.nodes.filter((x) => x.id !== id), moved] // parents before children
+        for (const touched of [n.parentId, gid]) if (touched) nodes = fitted(nodes, touched)
+        return { ...w, nodes }
+      })
+    },
 
     pauseAll: () => {
       const ws = workspace(get())
