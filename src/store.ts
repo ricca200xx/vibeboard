@@ -36,10 +36,19 @@ export type ConsoleData = {
 export type HandoffData = { auto: boolean }
 export type GroupData = { label: string; color: string }
 export type NoteData = { text: string; color: string }
-export type TextData = { text: string }
+export type TextData = { text: string; color?: string; font?: string; size?: 'S' | 'M' | 'L' | 'XL'; align?: 'left' | 'center' | 'right'; opacity?: number }
 export type WebData = { url: string }
 export type GitCardData = { cwd: string }
-export type KanbanData = { columns: { title: string; cards: string[] }[] }
+export type Priority = 'none' | 'low' | 'med' | 'high'
+export type KanbanCard = { id: string; title: string; notes?: string; due?: string; priority: Priority; done?: boolean }
+// Boards saved before cards had fields hold plain strings; Planner.tsx reads both.
+export type KanbanData = { columns: { id?: string; title: string; cards: (KanbanCard | string)[] }[] }
+export type CalEvent = { id: string; title: string; date: string; allDay: boolean; start?: string; end?: string; color: string; notes?: string }
+export type CalendarData = { events: CalEvent[]; month?: string }
+export type ChecklistData = { items: { id: string; text: string; done: boolean }[] }
+export type ShapeKind = 'rect' | 'ellipse' | 'diamond' | 'line' | 'arrow'
+// points: a line's two ends as fractions of the node box, so resizing scales it.
+export type ShapeData = { kind: ShapeKind; stroke: string; fill: string; strokeWidth: number; dash: 'solid' | 'dashed' | 'dotted'; round: boolean; opacity: number; text: string; points?: [number, number, number, number] }
 export type InkData = { paths: string[]; color: string; width?: number }
 
 export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean; scanned?: boolean }
@@ -47,7 +56,7 @@ export type Workspace = { id: string; name: string; nodes: Node[]; edges: Edge[]
 export type Project = { path: string; name: string; workspaces: Workspace[]; activeWs: string; memories: Memory[]; openedAt: number }
 export type Preset = { id: string; name: string; agents: string[]; label?: string }
 
-export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban'
+export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban' | 'shape'
 export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer' | 'presets' | 'settings'
 // A second sign-in of a CLI (its own config folder on disk), so two accounts can run side by side.
 export type Profile = { id: string; name: string; agent: string }
@@ -90,6 +99,7 @@ type S = {
   scans: Scan[]
   tool: Tool
   spawnAgent: string
+  shapeKind: ShapeKind
   modal: Modal
   toast: string | null
   settings: Settings
@@ -116,6 +126,8 @@ type S = {
   onEdgesChange: (changes: EdgeChange[]) => void
   setViewport: (vp: Viewport) => void
   addNode: (node: Node) => void
+  duplicateNode: (id: string) => void
+  reorderNode: (id: string, to: 'front' | 'back') => void
   updateData: (id: string, patch: Record<string, unknown>) => void
   removeNode: (id: string) => Promise<void>
   addConsole: (agent: string, center: { x: number; y: number }, extra?: Partial<ConsoleData>, parentId?: string, reveal?: boolean) => string
@@ -306,6 +318,7 @@ export const useStore = create<S>((set, get) => {
     scans: [],
     tool: 'select',
     spawnAgent: 'claude',
+    shapeKind: 'rect',
     modal: null,
     toast: null,
     settings: { yolo: false, fontSize: 13, defaultAgent: 'claude' },
@@ -450,6 +463,22 @@ export const useStore = create<S>((set, get) => {
     onEdgesChange: (changes) => updateWs((w) => ({ ...w, edges: applyEdgeChanges(changes, w.edges) })),
     setViewport: (viewport) => updateWs((w) => ({ ...w, viewport })),
     addNode: (node) => updateWs((w) => ({ ...w, nodes: [...w.nodes.map((n) => ({ ...n, selected: false })), { ...node, selected: true }] })),
+    duplicateNode: (id) => {
+      const n = workspace(get())?.nodes.find((x) => x.id === id)
+      if (!n || n.type === 'console' || n.type === 'group') return
+      get().addNode({ ...n, id: `${n.type}-${uid()}`, position: { x: n.position.x + 24, y: n.position.y + 24 }, data: structuredClone(n.data) })
+    },
+    // Stacking follows array order; the node's own children (an image's ink) move with it and a
+    // child never goes before its parent.
+    reorderNode: (id, to) =>
+      updateWs((w) => {
+        const n = w.nodes.find((x) => x.id === id)
+        if (!n) return w
+        const kids = w.nodes.filter((x) => x.parentId === id)
+        const rest = w.nodes.filter((x) => x.id !== id && x.parentId !== id)
+        const at = to === 'front' ? rest.length : n.parentId ? rest.findIndex((x) => x.id === n.parentId) + 1 : 0
+        return { ...w, nodes: [...rest.slice(0, at), n, ...kids, ...rest.slice(at)] }
+      }),
     updateData: (id, patch) => updateWs((w) => ({ ...w, nodes: w.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n)) })),
 
     removeNode: async (id) => {

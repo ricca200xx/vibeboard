@@ -29,6 +29,8 @@ import {
   Type,
   X,
   Check,
+  CalendarDays,
+  Columns3,
   Pipette,
   ChevronRight,
   LayoutGrid,
@@ -38,7 +40,10 @@ import { absolute, consoles, project, useStore, workspace, type ConsoleData, typ
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
 import { HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
-import { GroupNode, ImageNode, InkNode, KanbanNode, NOTE_COLORS, NoteNode, TextNode, WebNode } from './Nodes'
+import { GroupNode, ImageNode, InkNode, NoteNode, TextNode, WebNode } from './Nodes'
+import { BoardNode, CalendarNode, ChecklistNode, NEW_BOARD } from './Planner'
+import { newSticky, ShapeLayer, ShapeNode, ShapesMenu } from './Shapes'
+import { Inspector } from './Inspector'
 import { AgentIcon, Spark } from './icons'
 import { TopBar } from './TopBar'
 import { BottomBar } from './BottomBar'
@@ -55,7 +60,10 @@ const nodeTypes = {
   note: NoteNode,
   text: TextNode,
   web: WebNode,
-  kanban: KanbanNode,
+  kanban: BoardNode,
+  calendar: CalendarNode,
+  checklist: ChecklistNode,
+  shape: ShapeNode,
   image: ImageNode,
   ink: InkNode,
   memory: MemoryCard,
@@ -78,6 +86,8 @@ export function BoardScreen() {
       <div style={{ position: 'absolute', inset: 0 }}>
         <Board />
         <InkLayer />
+        <ShapeLayer />
+        <Inspector />
         <TopBar />
         <LeftToolbar />
         <RightToolbar />
@@ -162,7 +172,7 @@ function Board() {
     const pos = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY })
     if (s.tool === 'spawn') s.addConsole(s.spawnAgent, pos)
     else if (s.tool === 'note')
-      s.addNode({ id: nid('n'), type: 'note', position: { x: pos.x - 110, y: pos.y - 100 }, style: { width: 220, height: 200 }, data: { text: '', color: NOTE_COLORS[Math.floor(Math.random() * NOTE_COLORS.length)] } })
+      s.addNode(newSticky(pos))
     else if (s.tool === 'text') s.addNode({ id: nid('t'), type: 'text', position: { x: pos.x, y: pos.y - 18 }, data: { text: '' } })
     else if (s.tool === 'web')
       s.addNode({ id: nid('w'), type: 'web', position: { x: pos.x - 360, y: pos.y - 240 }, style: { width: 720, height: 480 }, data: { url: 'http://localhost:3000' } })
@@ -270,7 +280,7 @@ function Board() {
 const TOOLS: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
   { tool: 'select', icon: <MousePointer2 size={19} fill="currentColor" />, tip: 'Select' },
   { tool: 'spawn', icon: <Spark size={21} />, tip: 'Spawn agent' },
-  { tool: 'note', icon: <Copy size={19} />, tip: 'Sticky note' },
+  { tool: 'shape', icon: <Copy size={19} />, tip: 'Shapes' },
 ]
 const TOOLS_2: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
   { tool: 'text', icon: <Type size={19} />, tip: 'Text' },
@@ -284,20 +294,24 @@ function LeftToolbar() {
   const set = useStore((s) => s.set)
   const flow = useReactFlow()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [menu, setMenu] = useState(false)
+  const [menu, setMenu] = useState<'spawn' | 'shape' | null>(null)
+  const isOn = (t: Tool) => tool === t || (t === 'shape' && tool === 'note') // a sticky is picked from the Shapes menu
 
   const pick = (t: Tool) => {
-    set({ tool: tool === t && t !== 'select' ? 'select' : t })
-    setMenu(t === 'spawn' && tool !== 'spawn')
+    set({ tool: isOn(t) && t !== 'select' ? 'select' : t })
+    setMenu((t === 'spawn' || t === 'shape') && !isOn(t) ? t : null)
   }
 
   return (
     <>
       <div className="toolbar">
         {TOOLS.map((t) => (
-          <button key={t.tool} className={`tool-btn ${tool === t.tool ? 'active' : ''}`} data-tip={t.tip} onClick={() => pick(t.tool)}>
-            {t.tool === 'spawn' && tool === 'spawn' ? <Spark size={21} color="#fff" /> : t.icon}
-          </button>
+          <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
+            <button className={`tool-btn ${isOn(t.tool) ? 'active' : ''}`} data-tip={menu === t.tool ? undefined : t.tip} onClick={() => pick(t.tool)}>
+              {t.tool === 'spawn' && tool === 'spawn' ? <Spark size={21} color="#fff" /> : t.icon}
+            </button>
+            {t.tool === 'shape' && menu === 'shape' && <ShapesMenu onClose={() => setMenu(null)} />}
+          </span>
         ))}
         <button
           className="tool-btn"
@@ -335,7 +349,7 @@ function LeftToolbar() {
           e.target.value = ''
         }}
       />
-      {menu && tool === 'spawn' && <SpawnMenu onClose={() => setMenu(false)} />}
+      {menu === 'spawn' && tool === 'spawn' && <SpawnMenu onClose={() => setMenu(null)} />}
     </>
   )
 }
@@ -431,22 +445,10 @@ function ReportVisible() {
 function RightToolbar() {
   const s = useStore.getState()
   const running = useStore((st) => st.loops.filter((l) => l.active && (!l.scope || l.scope === st.active)).length)
+  const [todo, setTodo] = useState(false)
   const items = [
     { icon: <Layers size={18} />, tip: 'Mission map', run: () => s.set({ modal: 'mission' }) },
-    {
-      icon: <ListChecks size={18} />,
-      tip: 'Kanban',
-      run: () => {
-        const c = s.viewCenter()
-        s.addNode({
-          id: nid('k'),
-          type: 'kanban',
-          position: { x: c.x - 320, y: c.y - 180 },
-          style: { width: 640, height: 360 },
-          data: { columns: [{ title: 'To do', cards: [] }, { title: 'Doing', cards: [] }, { title: 'Done', cards: [] }] },
-        })
-      },
-    },
+    { icon: <ListChecks size={18} />, tip: 'To-do', run: () => setTodo((v) => !v) },
     { icon: <Settings2 size={18} />, tip: 'Settings', run: () => s.set({ modal: 'settings' }) },
     { icon: <Folder size={18} />, tip: 'Open in Finder', run: () => api.reveal(project(useStore.getState())!.path) },
     { icon: <FileText size={18} />, tip: 'Memory', run: () => s.set({ modal: 'memory' }) },
@@ -455,11 +457,38 @@ function RightToolbar() {
   return (
     <div className="toolbar right">
       {items.map((i) => (
-        <button key={i.tip} className="tool-btn" data-tip={i.tip} onClick={i.run}>
-          {i.icon}
-          {i.tip === 'Loops' && running > 0 && <span className="tool-badge">{running}</span>}
-        </button>
+        <span key={i.tip} style={{ position: 'relative', display: 'grid' }}>
+          <button className={`tool-btn ${i.tip === 'To-do' && todo ? 'on' : ''}`} data-tip={i.tip === 'To-do' && todo ? undefined : i.tip} onClick={i.run}>
+            {i.icon}
+            {i.tip === 'Loops' && running > 0 && <span className="tool-badge">{running}</span>}
+          </button>
+          {i.tip === 'To-do' && todo && <TodoMenu onClose={() => setTodo(false)} />}
+        </span>
       ))}
+    </div>
+  )
+}
+
+// Drops a fresh checklist, board or calendar in the middle of the view.
+function TodoMenu({ onClose }: { onClose: () => void }) {
+  const insert = (type: string, width: number, height: number, data: Record<string, unknown>) => {
+    const s = useStore.getState()
+    const c = s.viewCenter()
+    s.addNode({ id: nid(type[0]), type, position: { x: c.x - width / 2, y: c.y - height / 2 }, style: { width, height }, data })
+    onClose()
+  }
+  return (
+    <div className="todo-menu" onMouseLeave={onClose}>
+      <div className="section-label">Insert to-do</div>
+      <button onClick={() => insert('checklist', 300, 340, { items: [] })}>
+        <ListChecks size={15} /> Checklist
+      </button>
+      <button onClick={() => insert('kanban', 1060, 440, structuredClone(NEW_BOARD))}>
+        <Columns3 size={15} /> Board (kanban)
+      </button>
+      <button onClick={() => insert('calendar', 600, 500, { events: [] })}>
+        <CalendarDays size={15} /> Calendar
+      </button>
     </div>
   )
 }

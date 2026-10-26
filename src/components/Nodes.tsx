@@ -1,10 +1,22 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
-import { ArrowRight, ExternalLink, Globe, LayoutList, Plus, RotateCw, Users, X } from 'lucide-react'
+import { ExternalLink, Globe, RotateCw, Users, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { useStore, workspace, type GroupData, type InkData, type KanbanData, type NoteData, type TextData, type WebData } from '../store'
+import { useStore, workspace, type GroupData, type InkData, type NoteData, type TextData, type WebData } from '../store'
 
-export const NOTE_COLORS = ['#f7d774', '#f4a7c1', '#a8e6a1', '#9cc9f5', '#f8b88b']
+// Paper for sticky notes: warm, a little worn, light text on top.
+export const PAPER = ['#c99a35', '#d9733a', '#c94a4f', '#4f9a66', '#3a9690', '#4a6fcf', '#7d5cd6', '#3b3833']
+export const FONTS: Record<string, string> = {
+  Mono: 'var(--mono)',
+  Sans: "system-ui, -apple-system, sans-serif",
+  Serif: "'New York', 'Iowan Old Style', Georgia, serif",
+  Rounded: "ui-rounded, 'SF Pro Rounded', system-ui, sans-serif",
+  Hand: "'Bradley Hand', 'Chalkboard SE', 'Segoe Print', cursive",
+  Marker: "'Marker Felt', 'Chalkboard SE', fantasy",
+  Condensed: "'Avenir Next Condensed', 'Arial Narrow', sans-serif",
+  Typewriter: "'American Typewriter', 'Courier New', monospace",
+}
+export const SIZES = { S: 16, M: 22, L: 32, XL: 48 }
 
 function GroupNodeImpl({ id, data, selected }: NodeProps<Node<GroupData>>) {
   const members = useStore(useShallow((s) => workspace(s)?.nodes.filter((n) => n.parentId === id).map((n) => n.id) ?? []))
@@ -60,9 +72,9 @@ function NoteNodeImpl({ id, data, selected }: NodeProps<Node<NoteData>>) {
   useFocusWhenNew(ref, !data.text)
   return (
     <>
-      <NodeResizer isVisible={selected} minWidth={140} minHeight={110} />
-      <div className="note-node" style={{ background: data.color }}>
-        <textarea ref={ref} className="nodrag nowheel" value={data.text} placeholder="Note…" onChange={(e) => updateData(id, { text: e.target.value })} />
+      <NodeResizer isVisible={selected} minWidth={120} minHeight={100} />
+      <div className="note-node" style={{ ['--paper' as string]: data.color }}>
+        <textarea ref={ref} className="nodrag nowheel" value={data.text} placeholder="Write something…" onChange={(e) => updateData(id, { text: e.target.value })} />
       </div>
     </>
   )
@@ -75,7 +87,11 @@ function TextNodeImpl({ id, data }: NodeProps<Node<TextData>>) {
   const ref = useRef<HTMLTextAreaElement>(null)
   useFocusWhenNew(ref, !data.text)
   return (
-    <div className="text-node" onDoubleClick={() => setEditing(true)}>
+    <div
+      className="text-node"
+      style={{ color: data.color, fontFamily: FONTS[data.font ?? 'Mono'], fontSize: SIZES[data.size ?? 'M'], textAlign: data.align, opacity: data.opacity }}
+      onDoubleClick={() => setEditing(true)}
+    >
       {editing ? (
         <textarea
           ref={ref}
@@ -126,64 +142,6 @@ function WebNodeImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
   )
 }
 export const WebNode = memo(WebNodeImpl)
-
-function KanbanNodeImpl({ id, data, selected }: NodeProps<Node<KanbanData>>) {
-  const updateData = useStore((s) => s.updateData)
-  const set = (columns: KanbanData['columns']) => updateData(id, { columns })
-  const move = (ci: number, ki: number) => {
-    const card = data.columns[ci].cards[ki]
-    set(
-      data.columns.map((c, i) =>
-        i === ci ? { ...c, cards: c.cards.filter((_, k) => k !== ki) } : i === (ci + 1) % data.columns.length ? { ...c, cards: [...c.cards, card] } : c,
-      ),
-    )
-  }
-  return (
-    <>
-      <NodeResizer isVisible={selected} minWidth={420} minHeight={240} />
-      <div className="card-node">
-        <div className="card-head">
-          <LayoutList size={16} color="var(--muted)" />
-          <span className="t">Kanban</span>
-          <span className="spacer" />
-          <button className="icon-btn sm nodrag" onClick={() => useStore.getState().removeNode(id)}>
-            <X size={14} />
-          </button>
-        </div>
-        <div className="kanban nodrag nowheel">
-          {data.columns.map((col, ci) => (
-            <div className="col" key={col.title}>
-              <div className="section-label">
-                {col.title} · {col.cards.length}
-              </div>
-              {col.cards.map((card, ki) => (
-                <div className="card" key={ki}>
-                  <span
-                    contentEditable
-                    suppressContentEditableWarning
-                    onBlur={(e) => set(data.columns.map((c, i) => (i === ci ? { ...c, cards: c.cards.map((x, k) => (k === ki ? e.currentTarget.textContent || '' : x)) } : c)))}
-                  >
-                    {card}
-                  </span>
-                  <button className="icon-btn sm" title="Move" onClick={() => move(ci, ki)}>
-                    <ArrowRight size={12} />
-                  </button>
-                  <button className="icon-btn sm" title="Delete" onClick={() => set(data.columns.map((c, i) => (i === ci ? { ...c, cards: c.cards.filter((_, k) => k !== ki) } : c)))}>
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-              <button className="add" onClick={() => set(data.columns.map((c, i) => (i === ci ? { ...c, cards: [...c.cards, 'New card'] } : c)))}>
-                <Plus size={12} /> Add card
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
-  )
-}
-export const KanbanNode = memo(KanbanNodeImpl)
 
 function ImageNodeImpl({ data, selected }: NodeProps<Node<{ src: string }>>) {
   return (
