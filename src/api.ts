@@ -85,6 +85,8 @@ export const api = {
   setLoopActive: (id: string, on: boolean) => call<Loop>('POST', `/api/loops/${id}/active`, { on }),
   removeLoop: (id: string) => call('DELETE', `/api/loops/${id}`),
   visible: (ids: string[]) => call('POST', '/api/visible', { ids }),
+  ports: () => call<{ port: number; live: boolean }[]>('GET', '/api/ports'),
+  pageTitle: (url: string) => call<{ title: string }>('GET', `/api/page-title?url=${encodeURIComponent(url)}`),
 }
 
 export const ptyUrl = (params: Record<string, string>) => `${wsBase()}/ws/pty?${new URLSearchParams(params)}`

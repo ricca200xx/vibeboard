@@ -37,7 +37,9 @@ export type HandoffData = { auto: boolean }
 export type GroupData = { label: string; color: string }
 export type NoteData = { text: string; color: string }
 export type TextData = { text: string; color?: string; font?: string; size?: 'S' | 'M' | 'L' | 'XL'; align?: 'left' | 'center' | 'right'; opacity?: number }
-export type WebData = { url: string }
+export type WebTab = { id: string; url: string; back: string[]; fwd: string[] }
+// Tiles saved before tabs existed hold just `url`; WebTile.tsx reads both.
+export type WebData = { url?: string; tabs?: WebTab[]; active?: string; viewport?: string }
 export type GitCardData = { cwd: string }
 export type Priority = 'none' | 'low' | 'med' | 'high'
 export type KanbanCard = { id: string; title: string; notes?: string; due?: string; priority: Priority; done?: boolean }

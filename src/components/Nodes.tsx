@@ -1,8 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
-import { ExternalLink, Globe, RotateCw, Users, X } from 'lucide-react'
+import { Users, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { useStore, workspace, type GroupData, type InkData, type NoteData, type TextData, type WebData } from '../store'
+import { useStore, workspace, type GroupData, type InkData, type NoteData, type TextData } from '../store'
 
 // Paper for sticky notes: warm, a little worn, light text on top.
 export const PAPER = ['#c99a35', '#d9733a', '#c94a4f', '#4f9a66', '#3a9690', '#4a6fcf', '#7d5cd6', '#3b3833']
@@ -113,35 +113,6 @@ function TextNodeImpl({ id, data }: NodeProps<Node<TextData>>) {
   )
 }
 export const TextNode = memo(TextNodeImpl)
-
-function WebNodeImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
-  const updateData = useStore((s) => s.updateData)
-  const [url, setUrl] = useState(data.url)
-  const [nonce, setNonce] = useState(0)
-  const go = () => updateData(id, { url: /^https?:\/\//.test(url) ? url : `http://${url}` })
-  return (
-    <>
-      <NodeResizer isVisible={selected} minWidth={320} minHeight={220} />
-      <div className="card-node web-node">
-        <div className="web-bar">
-          <Globe size={15} color="var(--muted)" />
-          <input className="nodrag" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && go()} />
-          <button className="icon-btn sm nodrag" title="Reload" onClick={() => setNonce((n) => n + 1)}>
-            <RotateCw size={13} />
-          </button>
-          <a className="icon-btn sm nodrag" title="Open in browser" href={data.url} target="_blank" rel="noreferrer">
-            <ExternalLink size={13} />
-          </a>
-          <button className="icon-btn sm nodrag" title="Close" onClick={() => useStore.getState().removeNode(id)}>
-            <X size={14} />
-          </button>
-        </div>
-        <iframe key={nonce} className="nodrag nowheel" src={data.url} title={data.url} />
-      </div>
-    </>
-  )
-}
-export const WebNode = memo(WebNodeImpl)
 
 function ImageNodeImpl({ data, selected }: NodeProps<Node<{ src: string }>>) {
   return (

@@ -344,3 +344,18 @@ test('an "all consoles" loop stays inside its own project', async () => {
   mine.close()
   theirs.close()
 })
+
+test('web tiles: dev ports that are listening and a page title', async () => {
+  const page = http.createServer((_, res) => res.end('<html><head><title>Hello &amp; tile</title></head><body>hi</body></html>'))
+  await new Promise((r) => page.listen(0, '127.0.0.1', r))
+  const port = page.address().port
+  const probed = await (await api('GET', `/api/ports?ports=${port},1`)).json()
+  assert.deepEqual(probed, [
+    { port, live: true },
+    { port: 1, live: false },
+  ])
+  const { title } = await (await api('GET', `/api/page-title?url=${encodeURIComponent(`http://127.0.0.1:${port}/`)}`)).json()
+  assert.equal(title, 'Hello & tile')
+  assert.equal((await api('GET', `/api/page-title?url=${encodeURIComponent('file:///etc/passwd')}`)).status, 400, 'only web pages')
+  page.close()
+})

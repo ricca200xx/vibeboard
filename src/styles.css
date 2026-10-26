@@ -2007,66 +2007,224 @@ button.link:hover {
 .git-foot.bad {
   background: var(--accent-soft);
 }
-.web-bar {
+/* ---------- web tile ---------- */
+.web-tile {
+  border-radius: 12px;
+}
+.wt-title {
   display: flex;
-  gap: 8px;
   align-items: center;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--line);
+  gap: 8px;
+  height: 30px;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
   cursor: grab;
 }
-.web-bar input {
-  flex: 1;
-  background: var(--panel-3);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  padding: 5px 10px;
-  outline: 0;
-  font-family: var(--mono);
-  font-size: 12.5px;
+.wt-title .t {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.web-node iframe {
+.wt-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.wt-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+.wt-tab span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wt-tab.on {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.wt-tab button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--faint);
+}
+.wt-tab button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+.wt-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.wt-nav .icon-btn:disabled {
+  opacity: 0.35;
+}
+.wt-nav input {
   flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  outline: 0;
+}
+.wt-nav input:focus {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.vp-chip {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  white-space: nowrap;
+}
+.wt-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+.wt-frame iframe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
   border: 0;
   background: #fff;
 }
-.kanban {
-  display: flex;
-  gap: 10px;
-  padding: 0 12px 12px;
+.wt-start {
   flex: 1;
   min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 28px clamp(16px, 8%, 60px);
+  cursor: default;
 }
-.kanban .col {
-  flex: 1;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  overflow: auto;
+.wt-start h3 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
 }
-.kanban .card {
-  background: var(--panel-3);
-  border: 1px solid var(--line-2);
+.wt-start > input {
+  height: 38px;
+  padding: 0 14px;
   border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 13px;
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-}
-.kanban .card span {
-  flex: 1;
+  border: 1px solid var(--line-2);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-size: 14px;
   outline: 0;
 }
-.kanban .add {
+.wt-start > input:focus {
+  border-color: var(--accent);
+}
+.wt-sec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.wt-sec .live {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+}
+.wt-sec .live.on {
+  color: var(--done);
+}
+.wt-ports,
+.wt-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.wt-ports button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line-2);
+  font-family: var(--mono);
+  font-size: 12px;
   color: var(--muted);
+}
+.wt-ports button i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+.wt-ports button.on {
+  color: var(--text);
+  border-color: rgba(62, 207, 142, 0.45);
+}
+.wt-ports button.on i {
+  background: var(--done);
+  box-shadow: 0 0 6px var(--done);
+}
+.wt-quick button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px 0 6px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
   font-size: 13px;
-  text-align: left;
-  padding: 4px 2px;
+  color: var(--text-2);
+}
+.wt-quick button:hover,
+.wt-ports button:hover {
+  border-color: var(--muted);
+}
+.wt-quick .fav {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: var(--panel-3);
+  font-size: 11px;
+  font-weight: 700;
+}
+.wt-start .hint {
+  margin: 6px 0 0;
+  color: var(--faint);
+  font-size: 12px;
 }
 .image-node img {
   width: 100%;

@@ -40,7 +40,8 @@ import { absolute, consoles, project, useStore, workspace, type ConsoleData, typ
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
 import { HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
-import { GroupNode, ImageNode, InkNode, NoteNode, TextNode, WebNode } from './Nodes'
+import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
+import { newWebData, WebTile } from './WebTile'
 import { BoardNode, CalendarNode, ChecklistNode, NEW_BOARD } from './Planner'
 import { newSticky, ShapeLayer, ShapeNode, ShapesMenu } from './Shapes'
 import { Inspector } from './Inspector'
@@ -59,7 +60,7 @@ const nodeTypes = {
   group: GroupNode,
   note: NoteNode,
   text: TextNode,
-  web: WebNode,
+  web: WebTile,
   kanban: BoardNode,
   calendar: CalendarNode,
   checklist: ChecklistNode,
@@ -175,7 +176,7 @@ function Board() {
       s.addNode(newSticky(pos))
     else if (s.tool === 'text') s.addNode({ id: nid('t'), type: 'text', position: { x: pos.x, y: pos.y - 18 }, data: { text: '' } })
     else if (s.tool === 'web')
-      s.addNode({ id: nid('w'), type: 'web', position: { x: pos.x - 360, y: pos.y - 240 }, style: { width: 720, height: 480 }, data: { url: 'http://localhost:3000' } })
+      s.addNode({ id: nid('w'), type: 'web', position: { x: pos.x - 360, y: pos.y - 240 }, style: { width: 720, height: 480 }, data: newWebData() })
     else return
     set({ tool: 'select' })
   }

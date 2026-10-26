@@ -1,6 +1,7 @@
 // vibeboard local server: owns the PTYs (they outlive browser reloads),
 // receives Claude Code hook events for console status, persists board state.
 import http from 'node:http'
+import net from 'node:net'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -331,6 +332,40 @@ async function askClaude(model, prompt, opts) {
   }
   if (out.is_error || typeof out.result !== 'string') throw new Error(`claude failed: ${String(out.result ?? out.subtype).slice(0, 200)}`)
   return out.result
+}
+
+// ---------- web tiles: which dev servers are up, and what a page is called ----------
+const DEV_PORTS = [3000, 3001, 4200, 5173, 8000, 8080]
+// Live means something accepts a TCP connection there.
+const probePort = (port) =>
+  new Promise((resolve) => {
+    const sock = net.connect({ host: '127.0.0.1', port })
+    const done = (live) => {
+      sock.destroy()
+      resolve({ port, live })
+    }
+    sock.setTimeout(300, () => done(false))
+    sock.once('connect', () => done(true))
+    sock.once('error', () => done(false))
+  })
+
+// A tile's iframe can't read a cross-origin page's title, so the server reads the <title> instead.
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'", nbsp: ' ' }
+async function pageTitle(raw) {
+  const u = new URL(raw)
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('only http and https pages have a title')
+  const res = await fetch(u, { signal: AbortSignal.timeout(4000), headers: { accept: 'text/html' } })
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let html = ''
+  while (html.length < 256 * 1024 && !/<\/title>/i.test(html)) {
+    const { done, value } = await reader.read()
+    if (done) break
+    html += decoder.decode(value, { stream: true })
+  }
+  reader.cancel().catch(() => {}) // the rest of the page is not needed
+  const m = html.match(/<title[^>]*>([^<]*)<\/title>/i)
+  return m ? m[1].replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, k) => ENTITIES[k]).trim().slice(0, 200) : ''
 }
 
 // ---------- hand-off: one agent's work, summarised, becomes the next agent's prompt ----------
@@ -707,6 +742,17 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (route === 'git') return json(res, 200, await gitInfo(url.searchParams.get('cwd')))
+    if (route === 'ports') {
+      const asked = (url.searchParams.get('ports') ?? '').split(',').map(Number).filter((p) => Number.isInteger(p) && p > 0 && p < 65536)
+      return json(res, 200, await Promise.all((asked.length ? asked.slice(0, 20) : DEV_PORTS).map(probePort)))
+    }
+    if (route === 'page-title') {
+      try {
+        return json(res, 200, { title: await pageTitle(url.searchParams.get('url') ?? '') })
+      } catch (e) {
+        return json(res, 400, { error: e.message })
+      }
+    }
     if (route === 'usage' && id === 'limits') {
       try {
         return json(res, 200, await usage.limits(url.searchParams.get('profile') || '', url.searchParams.get('fresh') === '1'))
