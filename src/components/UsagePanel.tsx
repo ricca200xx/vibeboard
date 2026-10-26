@@ -4,7 +4,7 @@ import { ChartColumn, ChevronLeft, CircleUserRound, KeyRound, Pencil, Plus, Rota
 import { api, type AgentUsage, type Limits, type Usage } from '../api'
 import { useStore, type Profile, type UsageView } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
-import { AgentGlyph, Spark } from './icons'
+import { AgentGlyph, ClaudeMark } from './icons'
 
 // ---------- data shared by the top-bar pill and the panel ----------
 type Data = {
@@ -441,7 +441,7 @@ function TokensView({ close }: { close: () => void }) {
       <div className="usage-body">
         {!tokens ? (
           <div className="usage-loading">
-            <Spark size={20} color="var(--muted)" />
+            <ClaudeMark size={20} color="#8a847c" />
             <div className="t">Reading local session logs</div>
             <div className="s">Counting tokens straight from each agent's own transcripts on this Mac — nothing leaves your machine.</div>
           </div>

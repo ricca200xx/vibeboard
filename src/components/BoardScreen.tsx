@@ -45,7 +45,7 @@ import { newWebData, WebTile } from './WebTile'
 import { BoardNode, CalendarNode, ChecklistNode, NEW_BOARD } from './Planner'
 import { newSticky, ShapeLayer, ShapeNode, ShapesMenu } from './Shapes'
 import { Inspector } from './Inspector'
-import { AgentIcon, Spark } from './icons'
+import { AgentIcon, ClaudeMark } from './icons'
 import { TopBar } from './TopBar'
 import { BottomBar } from './BottomBar'
 import { GitPill } from './GitPanel'
@@ -280,7 +280,7 @@ function Board() {
 
 const TOOLS: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
   { tool: 'select', icon: <MousePointer2 size={19} fill="currentColor" />, tip: 'Select' },
-  { tool: 'spawn', icon: <Spark size={21} />, tip: 'Spawn agent' },
+  { tool: 'spawn', icon: <ClaudeMark size={20} />, tip: 'Spawn agent' },
   { tool: 'shape', icon: <Copy size={19} />, tip: 'Shapes' },
 ]
 const TOOLS_2: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
@@ -309,7 +309,7 @@ function LeftToolbar() {
         {TOOLS.map((t) => (
           <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
             <button className={`tool-btn ${isOn(t.tool) ? 'active' : ''}`} data-tip={menu === t.tool ? undefined : t.tip} onClick={() => pick(t.tool)}>
-              {t.tool === 'spawn' && tool === 'spawn' ? <Spark size={21} color="#fff" /> : t.icon}
+              {t.tool === 'spawn' && tool === 'spawn' ? <ClaudeMark size={20} color="#fff" /> : t.icon}
             </button>
             {t.tool === 'shape' && menu === 'shape' && <ShapesMenu onClose={() => setMenu(null)} />}
           </span>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Briefcase, ChevronDown, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
 import { consoles, project, useStore } from '../store'
-import { Spark } from './icons'
+import { ClaudeMark } from './icons'
 import { fmtTokens, loadLimits, loadTokens, useUsage } from './UsagePanel'
 
 const todayKey = () => {
@@ -124,7 +124,7 @@ export function TopBar() {
       </span>
       <button className="pill usage-pill" title="Usage" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
         <Info size={15} color="var(--muted)" />
-        <Spark size={14} />
+        <ClaudeMark size={14} />
         {resets ? (
           <>
             <span className="muted">resets</span> <span className="mono">{resets}</span>

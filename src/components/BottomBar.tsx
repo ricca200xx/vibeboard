@@ -26,7 +26,7 @@ const ROLES: [string, string][] = [
   ['Security', '#ff5a4e'],
   ['General', '#8a847c'],
 ]
-const FILL = ['claude', 'codex', 'gemini', 'opencode', 'copilot', 'shell', 'aider', 'cursor', 'qwen', 'goose']
+const FILL = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'shell', 'aider', 'cursor', 'qwen', 'copilot']
 
 function Chip({ k, label, onClick, on }: { k: keyof typeof CHIPS; label: string; onClick: () => void; on?: boolean }) {
   const [a, b] = CHIPS[k]
