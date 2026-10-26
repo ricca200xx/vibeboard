@@ -102,6 +102,7 @@ type S = {
   tool: Tool
   spawnAgent: string
   shapeKind: ShapeKind
+  connecting: string | null // the orchestrator whose Connect mode is on
   modal: Modal
   toast: string | null
   settings: Settings
@@ -147,6 +148,7 @@ type S = {
   frame: (ids: string[]) => void
   jumpTo: (id: string) => void
   connectConsoles: (source: string, target: string) => boolean
+  toggleWire: (orch: string, target: string) => void
   handoff: (from: string, to: string) => Promise<void>
   setEdgeData: (id: string, patch: Partial<HandoffData>) => void
   removeEdge: (id: string) => void
@@ -321,6 +323,7 @@ export const useStore = create<S>((set, get) => {
     tool: 'select',
     spawnAgent: 'claude',
     shapeKind: 'rect',
+    connecting: null,
     modal: null,
     toast: null,
     settings: { yolo: false, fontSize: 13, defaultAgent: 'claude' },
@@ -748,6 +751,15 @@ export const useStore = create<S>((set, get) => {
 
     setEdgeData: (id, patch) => updateWs((w) => ({ ...w, edges: w.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data, ...patch } } : e)) })),
     removeEdge: (id) => updateWs((w) => ({ ...w, edges: w.edges.filter((e) => e.id !== id) })),
+
+    // An orchestrator commands what it is wired to: a command wire per group or console, toggled from Connect.
+    toggleWire: (orch, target) =>
+      updateWs((w) => {
+        const on = w.edges.some((e) => e.type === 'command' && e.source === orch && e.target === target)
+        if (on) return { ...w, edges: w.edges.filter((e) => !(e.type === 'command' && e.source === orch && e.target === target)) }
+        if (!w.nodes.some((n) => n.id === target && (n.type === 'console' || n.type === 'group'))) return w
+        return { ...w, edges: [...w.edges, { id: `o-${uid()}`, source: orch, target, type: 'command' }] }
+      }),
 
     // Open whichever project and workspace hold this console, then centre it.
     jumpTo: (id) => {

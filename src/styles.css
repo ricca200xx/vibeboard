@@ -730,6 +730,7 @@ button.pill:hover {
   border-radius: 22px;
   border: 1.5px solid color-mix(in srgb, var(--g) 55%, transparent);
   background: color-mix(in srgb, var(--g) 4%, transparent);
+  position: relative;
 }
 .react-flow__node.selected .group-node {
   border-color: var(--g);
@@ -4263,4 +4264,359 @@ textarea.field {
 }
 .react-flow__attribution {
   display: none;
+}
+/* ---------- orchestrator ---------- */
+.orch {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  background: rgba(24, 23, 21, 0.98);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.react-flow__node-orchestrator.selected .orch,
+.orch.connecting {
+  border-color: var(--accent);
+}
+.orch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px 8px 14px;
+  font-size: 14.5px;
+  cursor: grab;
+}
+.orb.sm {
+  width: 20px;
+  height: 20px;
+  box-shadow: 0 0 10px rgba(255, 122, 47, 0.4);
+}
+.orb.lg {
+  width: 46px;
+  height: 46px;
+}
+.orch-head .ring-n {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.orch-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text-2);
+}
+.orch-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 13px;
+  border: 1px solid rgba(240, 85, 58, 0.5);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.orch-connect.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.orch-menu {
+  position: absolute;
+  right: 0;
+  top: 30px;
+  z-index: 6;
+  display: grid;
+  min-width: 190px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
+}
+.orch-menu.up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 10px;
+  right: 10px;
+}
+.orch-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.orch-menu button:hover {
+  background: var(--panel-3);
+}
+.orch-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: default;
+}
+.orch-hint {
+  margin: 4px 4px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.orch-label {
+  margin: 6px 4px 2px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+}
+.orch-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+.orch-pick small {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--muted);
+}
+.orch-pick .tick {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  display: grid;
+  place-items: center;
+}
+.orch-pick.on {
+  background: var(--accent);
+  color: #fff;
+}
+.orch-pick.on small {
+  color: rgba(255, 255, 255, 0.75);
+}
+.orch-pick.on .tick {
+  border-color: #fff;
+  background: #fff;
+  color: var(--accent);
+}
+.orch-empty {
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 10px 20px;
+}
+.orch-empty b {
+  color: var(--text);
+  font-size: 14px;
+  margin-top: 4px;
+}
+.orch-agent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px;
+  border-radius: 9px;
+}
+.orch-agent:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.orch-agent .who {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+.orch-agent .who b {
+  font-size: 13.5px;
+}
+.orch-agent .who small {
+  color: var(--muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pill-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+.pill-state::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.pill-state.working {
+  color: var(--working);
+  background: color-mix(in srgb, var(--working) 14%, transparent);
+}
+.pill-state.working::before {
+  background: var(--working);
+}
+.pill-state.needs {
+  color: var(--needs);
+}
+.pill-state.needs::before {
+  background: var(--needs);
+}
+.pill-state.done::before {
+  background: var(--done);
+}
+.pill-state.stopped::before,
+.pill-state.paused::before {
+  background: var(--faint);
+}
+.orch-team {
+  margin-top: 6px;
+}
+.orch-team-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.orch-team-head i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.orch-foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 10px 10px;
+  padding: 0 6px 0 12px;
+  height: 42px;
+  border-radius: 21px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+}
+.orch-foot input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+.round-btn.sm {
+  width: 28px;
+  height: 28px;
+}
+.round-btn.go {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.orch-reply {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 100%;
+  padding: 5px 12px;
+  border-radius: 12px;
+  background: var(--panel-3);
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cmd-handle {
+  opacity: 0;
+  pointer-events: none;
+}
+.react-flow__edge-path.command-edge {
+  stroke: color-mix(in srgb, var(--accent) 75%, transparent);
+  stroke-width: 1.8;
+}
+.command-pulse {
+  fill: #fff;
+  filter: drop-shadow(0 0 4px rgba(255, 140, 90, 0.9));
+}
+/* Connect mode: every console and group is a target. */
+.wire-pick {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  border: 2px dashed rgba(240, 85, 58, 0.6);
+  background: rgba(20, 18, 16, 0.35);
+  cursor: pointer;
+}
+.wire-pick span {
+  padding: 6px 14px;
+  border-radius: 14px;
+  background: rgba(24, 23, 21, 0.95);
+  border: 1px solid var(--line-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.wire-pick.on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: rgba(240, 85, 58, 0.1);
+}
+.wire-pick.on span {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.group-node .wire-pick {
+  inset: -2px;
 }

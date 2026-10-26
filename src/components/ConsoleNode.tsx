@@ -247,6 +247,18 @@ function ResumeOffer({ id, sessionId }: { id: string; sessionId: string }) {
   )
 }
 
+// While an orchestrator's Connect is on, a console or group is a big target: click to wire or unwire it.
+export function WirePick({ id }: { id: string }) {
+  const orch = useStore((s) => s.connecting)
+  const wired = useStore((s) => !!s.connecting && !!workspace(s)?.edges.some((e) => e.type === 'command' && e.source === s.connecting && e.target === id))
+  if (!orch) return null
+  return (
+    <button className={`wire-pick nodrag ${wired ? 'on' : ''}`} onClick={() => useStore.getState().toggleWire(orch, id)}>
+      <span>{wired ? 'Wired · click to remove' : 'Click to wire'}</span>
+    </button>
+  )
+}
+
 function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   const live = useStore((s) => s.live[id])
   const { updateData, restartConsole, duplicateConsole, removeNode } = useStore.getState()
@@ -276,6 +288,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
       <Handle type="target" position={Position.Left} className="wire-handle" />
       <Handle type="source" position={Position.Right} className="wire-handle" title="Drag onto another console: it takes over whenever this one finishes" />
       <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 42%, #2a2724)` }}>
+        <WirePick id={id} />
         <div className="console-head" onDoubleClick={snapTo100}>
           <button className="agent-switch nodrag" onClick={() => setAgentMenu((v) => !v)} title={agentById(data.agent)?.name}>
             <AgentGlyph id={data.agent} size={19} />

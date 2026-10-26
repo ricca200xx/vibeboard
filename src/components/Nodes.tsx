@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
+import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react'
 import { Users, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
+import { WirePick } from './ConsoleNode'
 import { useStore, workspace, type GroupData, type InkData, type NoteData, type TextData } from '../store'
 
 // Paper for sticky notes: warm, a little worn, light text on top.
@@ -26,7 +27,9 @@ function GroupNodeImpl({ id, data, selected }: NodeProps<Node<GroupData>>) {
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={240} minHeight={140} />
+      <Handle type="target" position={Position.Left} className="cmd-handle" isConnectable={false} />
       <div className="group-node" style={{ ['--g' as string]: data.color }}>
+        <WirePick id={id} />
         <div className="group-head" onDoubleClick={() => setEditing(true)}>
           <Users size={13} color={data.color} />
           {editing ? (

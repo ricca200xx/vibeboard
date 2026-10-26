@@ -9,15 +9,43 @@ import { useNow } from './LoopsModal'
 
 type Filter = 'all' | 'working' | 'needs' | 'idle' | 'done'
 type Team = { id: string; label: string; color: string; members: Node<ConsoleData>[] }
-type Sel = { kind: 'console' | 'team'; id: string } | { kind: 'orch' | 'center' } | null
+// A commander and what it drives: an orchestrator node, or the Command center for everything unwired.
+type Section = { id: string; kind: 'orch' | 'center'; label: string; singles: Node<ConsoleData>[]; teams: Team[] }
+type Sel = { kind: 'console' | 'team' | 'section'; id: string } | null
 
-const STATUS_TEXT: Record<string, string> = { idle: 'At the prompt', working: 'Working', needs: 'Needs you', done: 'Done', stopped: 'Stopped', paused: 'Paused' }
-const STATUS_COLOR: Record<string, string> = { idle: 'var(--idle)', working: 'var(--working)', needs: 'var(--needs)', done: 'var(--done)', stopped: 'var(--faint)', paused: '#9db4ff' }
+export const STATUS_TEXT: Record<string, string> = { idle: 'At the prompt', working: 'Working', needs: 'Needs you', done: 'Done', stopped: 'Stopped', paused: 'Paused' }
+export const STATUS_COLOR: Record<string, string> = { idle: 'var(--idle)', working: 'var(--working)', needs: 'var(--needs)', done: 'var(--done)', stopped: 'var(--faint)', paused: '#9db4ff' }
 
 const ROW = 57
 const CARD_H = 44
-const GAP = 24 // between the teams and the consoles outside any team
+const GAP = 24 // between two commanders' blocks
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+const agentsOf = (sec: Section) => [...sec.singles, ...sec.teams.flatMap((t) => t.members)]
+
+// Who commands what, read from the board: command wires decide; a group wired whole brings its members.
+function sectionsOf(nodes: Node[], edges: { type?: string; source: string; target: string }[]) {
+  const all = consoles(nodes)
+  const groups = nodes.filter((n) => n.type === 'group') as Node<GroupData>[]
+  const claimed = new Set<string>()
+  const team = (g: Node<GroupData>): Team => {
+    const t = { id: g.id, label: g.data.label, color: g.data.color, members: all.filter((n) => n.parentId === g.id && !claimed.has(n.id)) }
+    claimed.add(g.id)
+    t.members.forEach((m) => claimed.add(m.id))
+    return t
+  }
+  const orchs = nodes.filter((n) => n.type === 'orchestrator')
+  const sections: Section[] = orchs.map((o, i) => {
+    const targets = edges.filter((e) => e.type === 'command' && e.source === o.id).map((e) => e.target)
+    const teams = groups.filter((g) => targets.includes(g.id) && !claimed.has(g.id)).map(team)
+    const singles = all.filter((n) => targets.includes(n.id) && !claimed.has(n.id))
+    singles.forEach((n) => claimed.add(n.id))
+    return { id: o.id, kind: 'orch', label: orchs.length > 1 ? `Orchestrator ${i + 1}` : 'Orchestrator', singles, teams }
+  })
+  const teams = groups.filter((g) => !claimed.has(g.id)).map(team)
+  const singles = all.filter((n) => !claimed.has(n.id))
+  if (teams.length || singles.length) sections.push({ id: '__center', kind: 'center', label: 'Command center', singles, teams })
+  return { sections, all, groups, orchestrators: orchs.length }
+}
 
 export function MissionMap() {
   const ws = useStore(workspace)!
@@ -37,14 +65,8 @@ export function MissionMap() {
     return () => ro.disconnect()
   }, [])
 
-  const all = consoles(ws.nodes)
+  const { sections, all, groups, orchestrators } = sectionsOf(ws.nodes, ws.edges)
   const statusOf = (id: string) => (live[id] ? (live[id].paused ? 'paused' : live[id].status) : 'stopped')
-  const groups = ws.nodes.filter((n) => n.type === 'group') as Node<GroupData>[]
-  const teams: Team[] = groups.map((g) => ({ id: g.id, label: g.data.label, color: g.data.color, members: all.filter((n) => n.parentId === g.id) }))
-  const loose = all.filter((n) => !n.parentId || !groups.some((g) => g.id === n.parentId))
-  const inTeams = all.length - loose.length
-  const orchestrators = teams.length ? 1 : 0
-
   const counts = {
     all: all.length,
     working: all.filter((n) => statusOf(n.id) === 'working').length,
@@ -57,30 +79,41 @@ export function MissionMap() {
     const okFilter = filter === 'all' || (filter === 'idle' ? ['idle', 'stopped', 'paused'].includes(st) : st === filter)
     return okFilter && (!q || n.data.name.toLowerCase().includes(q.toLowerCase()))
   }
+  const doneIn = (list: Node<ConsoleData>[]) => list.filter((m) => statusOf(m.id) === 'done').length
+  const workingIn = (list: Node<ConsoleData>[]) => list.filter((m) => statusOf(m.id) === 'working').length
 
-  // Layout: orchestrator → teams → their consoles, then the command center → consoles in no team.
+  // Layout: commander → teams → consoles, one console per row; a commander's lone consoles hang off it directly.
   const cardW = 200
   const teamW = 170
-  const orchW = 180
-  const xConsole = Math.max(teamW + orchW + 160, width - cardW - 4)
-  const xTeam = Math.round((orchW + xConsole - teamW) / 2 + 20)
-  let row = 0
-  const teamRows = teams.map((t) => t.members.map(() => 8 + row++ * ROW))
-  const teamY = teamRows.map((ys) => (ys.length ? (ys[0] + ys[ys.length - 1]) / 2 : 8 + row++ * ROW))
-  const orchY = teamY.length ? (teamY[0] + teamY[teamY.length - 1]) / 2 : 8
-  const looseTop = 8 + row * ROW + (teams.length ? GAP : 0)
-  const looseY = loose.map((_, i) => looseTop + i * ROW)
-  const height = Math.max(460, (loose.length ? looseY[looseY.length - 1] : 8 + row * ROW) + CARD_H + 12)
+  const headW = 180
+  const xConsole = Math.max(teamW + headW + 160, width - cardW - 4)
+  const xTeam = Math.round((headW + xConsole - teamW) / 2 + 20)
+  let y = 8
+  const layout = sections.map((sec, si) => {
+    if (si) y += GAP
+    const start = y
+    const singleY = sec.singles.map(() => (y += ROW) - ROW)
+    const teamRows = sec.teams.map((t) => (t.members.length ? t.members.map(() => (y += ROW) - ROW) : [(y += ROW) - ROW]))
+    const teamY = teamRows.map((ys) => (ys[0] + ys[ys.length - 1]) / 2)
+    const end = y - ROW
+    // The Command center sits at the top of its block, like a list header; an orchestrator in the middle.
+    const headY = sec.kind === 'center' ? start : (start + end) / 2
+    return { sec, singleY, teamRows, teamY, headY }
+  })
+  const height = Math.max(460, y + 12)
   const curve = (x1: number, y1: number, x2: number, y2: number) => {
     const mx = (x1 + x2) / 2
     return `M${x1} ${y1} C${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
   }
+  const wire = (key: string, d: string, dashed: boolean, faded = false) => (
+    <path key={key} d={d} stroke={dashed ? '#8a847c' : '#6b8f5e'} strokeDasharray={dashed ? '4 4' : undefined} strokeWidth={1.3} fill="none" opacity={faded ? 0.18 : dashed ? 0.7 : 0.85} />
+  )
 
   const jump = (ids: string[]) => {
     close()
     setTimeout(() => useStore.getState().frame(ids), 30)
   }
-  const isSel = (kind: string, id?: string) => sel?.kind === kind && (!id || ('id' in sel && sel.id === id))
+  const isSel = (kind: string, id: string) => sel?.kind === kind && sel.id === id
   const consoleCard = (m: Node<ConsoleData>, top: number) => {
     const st = statusOf(m.id)
     return (
@@ -101,9 +134,13 @@ export function MissionMap() {
     )
   }
 
-  const team = sel?.kind === 'team' ? teams.find((t) => t.id === sel.id) : undefined
+  const teamById = (id: string) => sections.flatMap((s) => s.teams.map((t) => ({ t, s }))).find((x) => x.t.id === id)
+  const sectionOf = (cid: string) =>
+    sections.find((s) => s.singles.some((n) => n.id === cid) || s.teams.some((t) => t.members.some((n) => n.id === cid)))
+  const pickedTeam = sel?.kind === 'team' ? teamById(sel.id) : undefined
   const picked = sel?.kind === 'console' ? all.find((n) => n.id === sel.id) : undefined
-  const workingIn = (list: Node<ConsoleData>[]) => list.filter((m) => statusOf(m.id) === 'working').length
+  const pickedSection = sel?.kind === 'section' ? sections.find((s) => s.id === sel.id) : undefined
+  const center = sections.find((s) => s.kind === 'center')
 
   return (
     <div className="backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
@@ -115,7 +152,7 @@ export function MissionMap() {
           <div style={{ flex: 1 }}>
             <h2>Mission Map</h2>
             <div className="sub">
-              {plural(orchestrators, 'orchestrator')} · {plural(teams.length, 'team')} · {plural(all.length, 'console')} · {counts.working} working
+              {plural(orchestrators, 'orchestrator')} · {plural(groups.length, 'team')} · {plural(all.length, 'console')} · {counts.working} working
             </div>
           </div>
           <button className="icon-btn" onClick={close}>
@@ -151,89 +188,79 @@ export function MissionMap() {
             <div className="nowheel" style={{ overflow: 'auto', flex: 1, maxHeight: 'calc(100vh - 380px)' }}>
               <div className="mm-graph" ref={graphRef} style={{ height }} onClick={(e) => e.target === e.currentTarget && setSel(null)}>
                 <svg>
-                  {teams.map((t, ti) => (
-                    <path key={t.id} d={curve(orchW, orchY + CARD_H / 2, xTeam, teamY[ti] + CARD_H / 2)} stroke="#6b8f5e" strokeWidth={1.3} fill="none" opacity={0.8} />
-                  ))}
-                  {teams.flatMap((t, ti) =>
-                    t.members.map((m, mi) => (
-                      <path
-                        key={m.id}
-                        d={curve(xTeam + teamW, teamY[ti] + CARD_H / 2, xConsole, teamRows[ti][mi] + CARD_H / 2)}
-                        stroke="#6b8f5e"
-                        strokeWidth={1.3}
-                        fill="none"
-                        opacity={matches(m) ? 0.85 : 0.2}
-                      />
-                    )),
-                  )}
-                  {loose.map((m, i) => (
-                    <path
-                      key={m.id}
-                      d={curve(orchW, looseTop + CARD_H / 2, xConsole, looseY[i] + CARD_H / 2)}
-                      stroke="#8a847c"
-                      strokeDasharray="4 4"
-                      strokeWidth={1.2}
-                      fill="none"
-                      opacity={matches(m) ? 0.7 : 0.15}
-                    />
-                  ))}
+                  {layout.flatMap(({ sec, singleY, teamRows, teamY, headY }) => {
+                    const dashed = sec.kind === 'center'
+                    const hy = headY + CARD_H / 2
+                    return [
+                      ...sec.singles.map((m, i) => wire(`${sec.id}-${m.id}`, curve(headW, hy, xConsole, singleY[i] + CARD_H / 2), dashed, !matches(m))),
+                      ...sec.teams.map((t, ti) => wire(`${sec.id}-${t.id}`, curve(headW, hy, xTeam, teamY[ti] + CARD_H / 2), dashed)),
+                      ...sec.teams.flatMap((t, ti) =>
+                        t.members.map((m, mi) => wire(`${t.id}-${m.id}`, curve(xTeam + teamW, teamY[ti] + CARD_H / 2, xConsole, teamRows[ti][mi] + CARD_H / 2), dashed, !matches(m))),
+                      ),
+                    ]
+                  })}
                 </svg>
 
-                {teams.length > 0 && (
-                  <button className={`mm-card ${isSel('orch') ? 'sel' : ''}`} style={{ left: 0, top: orchY, width: orchW }} onClick={() => setSel({ kind: 'orch' })} onDoubleClick={() => jump(teams.map((t) => t.id))}>
-                    <span className="agent-icon" style={{ width: 26, height: 26, background: 'var(--accent-soft)', color: 'var(--accent)' }}>
-                      <Network size={14} />
-                    </span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <div className="t">Orchestrator</div>
-                      <div className="s">
-                        {plural(inTeams, 'agent')} · {teams.length === 1 ? 'Team' : plural(teams.length, 'team')}
-                      </div>
-                    </span>
-                    <span className="s ring-n">
-                      <Ring part={workingIn(all.filter((n) => !loose.includes(n)))} of={inTeams} />
-                      {workingIn(all.filter((n) => !loose.includes(n)))}/{inTeams}
-                    </span>
-                  </button>
-                )}
-
-                {teams.map((t, ti) => {
-                  const busy = workingIn(t.members)
+                {layout.map(({ sec, headY }) => {
+                  const agents = agentsOf(sec)
                   return (
                     <button
-                      key={t.id}
-                      className={`mm-card team ${isSel('team', t.id) ? 'sel' : ''}`}
-                      style={{ left: xTeam, top: teamY[ti], width: teamW }}
-                      onClick={() => setSel({ kind: 'team', id: t.id })}
-                      onDoubleClick={() => jump([t.id])}
+                      key={sec.id}
+                      className={`mm-card ${isSel('section', sec.id) ? 'sel' : ''}`}
+                      style={{ left: 0, top: headY, width: headW }}
+                      onClick={() => setSel({ kind: 'section', id: sec.id })}
+                      onDoubleClick={() => jump(sec.kind === 'orch' ? [sec.id] : agents.map((m) => m.id))}
                     >
+                      {sec.kind === 'orch' ? <span className="orb sm" /> : <Command size={14} color="var(--muted)" />}
                       <span style={{ flex: 1, minWidth: 0 }}>
-                        <div className="t">
-                          <span className="dot" style={{ background: t.color, width: 6, height: 6 }} /> {t.label}
-                        </div>
-                        <div className="s">{busy ? `${busy} working` : `${t.members.length} idle`}</div>
-                        <div className="bar">
-                          <i style={{ width: `${t.members.length ? (busy / t.members.length) * 100 : 0}%` }} />
+                        <div className="t">{sec.label}</div>
+                        <div className="s ellipsis">
+                          {sec.kind === 'orch'
+                            ? `${plural(agents.length, 'agent')} · ${sec.teams.length === 1 ? 'Team' : plural(sec.teams.length, 'team')}`
+                            : `${agents.length} only reachable from the command bar`}
                         </div>
                       </span>
-                      <span className="s">{t.members.length}</span>
-                      <Users size={12} color="var(--faint)" />
+                      {sec.kind === 'orch' && agents.length > 0 && (
+                        <span className="s ring-n">
+                          <Ring part={doneIn(agents)} of={agents.length} />
+                          {doneIn(agents)}/{agents.length}
+                        </span>
+                      )}
                     </button>
                   )
                 })}
 
-                {loose.length > 0 && (
-                  <button className={`mm-card ${isSel('center') ? 'sel' : ''}`} style={{ left: 0, top: looseTop, width: orchW }} onClick={() => setSel({ kind: 'center' })} onDoubleClick={() => jump(loose.map((m) => m.id))}>
-                    <Command size={14} color="var(--muted)" />
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <div className="t">Command center</div>
-                      <div className="s ellipsis">{loose.length} only reachable from the command bar</div>
-                    </span>
-                  </button>
+                {layout.flatMap(({ sec, teamY }) =>
+                  sec.teams.map((t, ti) => {
+                    const busy = workingIn(t.members)
+                    return (
+                      <button
+                        key={t.id}
+                        className={`mm-card team ${isSel('team', t.id) ? 'sel' : ''}`}
+                        style={{ left: xTeam, top: teamY[ti], width: teamW }}
+                        onClick={() => setSel({ kind: 'team', id: t.id })}
+                        onDoubleClick={() => jump([t.id])}
+                      >
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <div className="t">
+                            <span className="dot" style={{ background: t.color, width: 6, height: 6 }} /> {t.label}
+                          </div>
+                          <div className="s">{busy ? `${busy} working` : `${t.members.length} idle`}</div>
+                          <div className="bar">
+                            <i style={{ width: `${t.members.length ? (busy / t.members.length) * 100 : 0}%` }} />
+                          </div>
+                        </span>
+                        <span className="s">{t.members.length}</span>
+                        <Users size={12} color="var(--faint)" />
+                      </button>
+                    )
+                  }),
                 )}
 
-                {teams.flatMap((t, ti) => t.members.map((m, mi) => consoleCard(m, teamRows[ti][mi])))}
-                {loose.map((m, i) => consoleCard(m, looseY[i]))}
+                {layout.flatMap(({ sec, singleY, teamRows }) => [
+                  ...sec.singles.map((m, i) => consoleCard(m, singleY[i])),
+                  ...sec.teams.flatMap((t, ti) => t.members.map((m, mi) => consoleCard(m, teamRows[ti][mi]))),
+                ])}
                 {!all.length && <div className="menu-hint" style={{ position: 'absolute', left: xTeam, top: 20 }}>No consoles on this workspace yet</div>}
               </div>
             </div>
@@ -255,66 +282,60 @@ export function MissionMap() {
               <ConsoleDetail
                 node={picked}
                 status={statusOf(picked.id)}
-                team={teams.find((t) => t.id === picked.parentId)}
+                team={pickedTeamOf(picked, sections)}
+                section={sectionOf(picked.id)}
                 onTeam={(id) => setSel({ kind: 'team', id })}
-                onOrch={() => setSel({ kind: 'orch' })}
-                onCenter={() => setSel({ kind: 'center' })}
+                onSection={(id) => setSel({ kind: 'section', id })}
                 onJump={() => jump([picked.id])}
               />
-            ) : team ? (
+            ) : pickedTeam ? (
               <>
-                <SideHead icon={<Users size={21} />} title={team.label} sub={plural(team.members.length, 'console')} tint="green" />
-                <button className="btn primary wide" onClick={() => jump([team.id])}>
+                <SideHead icon={<Users size={21} />} title={pickedTeam.t.label} sub={plural(pickedTeam.t.members.length, 'console')} tint="green" />
+                <button className="btn primary wide" onClick={() => jump([pickedTeam.t.id])}>
                   <Crosshair size={15} /> Frame the team on the board
                 </button>
                 <div className="section-label">Members</div>
-                <MemberList members={team.members} statusOf={statusOf} onPick={(id) => setSel({ kind: 'console', id })} />
+                <MemberList members={pickedTeam.t.members} statusOf={statusOf} onPick={(id) => setSel({ kind: 'console', id })} />
                 <div className="section-label">Commanded by</div>
                 <div className="list-box">
-                  <button className="member" onClick={() => setSel({ kind: 'orch' })}>
-                    <Network size={15} color="var(--accent)" />
-                    <span style={{ flex: 1 }}>
-                      <div className="t">Orchestrator</div>
-                      <div className="s">
-                        {plural(inTeams, 'agent')} · {teams.length === 1 ? 'Team' : plural(teams.length, 'team')}
-                      </div>
-                    </span>
-                    <ChevronRight size={15} color="var(--faint)" />
-                  </button>
+                  <SectionRow section={pickedTeam.s} onPick={() => setSel({ kind: 'section', id: pickedTeam.s.id })} />
                 </div>
               </>
-            ) : sel?.kind === 'orch' ? (
+            ) : pickedSection ? (
               <>
-                <SideHead icon={<Network size={21} />} title="Orchestrator" sub={`${plural(inTeams, 'agent')} · ${plural(teams.length, 'team')}`} tint="accent" />
-                <button className="btn primary wide" onClick={() => jump(teams.map((t) => t.id))}>
-                  <Crosshair size={15} /> Frame its teams on the board
+                <SideHead
+                  icon={pickedSection.kind === 'orch' ? <span className="orb" style={{ width: 26, height: 26 }} /> : <Command size={20} />}
+                  title={pickedSection.label}
+                  sub={pickedSection.kind === 'orch' ? `${plural(agentsOf(pickedSection).length, 'agent')} · ${plural(pickedSection.teams.length, 'team')}` : plural(agentsOf(pickedSection).length, 'console')}
+                  tint={pickedSection.kind === 'orch' ? 'accent' : undefined}
+                />
+                <button className="btn primary wide" onClick={() => jump(pickedSection.kind === 'orch' ? [pickedSection.id] : agentsOf(pickedSection).map((m) => m.id))}>
+                  <Crosshair size={15} /> {pickedSection.kind === 'orch' ? 'Go to the orchestrator' : 'Frame them on the board'}
                 </button>
-                <div className="section-label">Teams</div>
-                <div className="list-box">
-                  {teams.map((t) => (
-                    <button key={t.id} className="member" onClick={() => setSel({ kind: 'team', id: t.id })}>
-                      <span className="dot" style={{ background: t.color, width: 7, height: 7 }} />
-                      <span style={{ flex: 1 }}>
-                        <div className="t">{t.label}</div>
-                        <div className="s">
-                          {plural(t.members.length, 'console')} · {workingIn(t.members)} working
-                        </div>
-                      </span>
-                      <ChevronRight size={15} color="var(--faint)" />
-                    </button>
-                  ))}
+                {pickedSection.teams.length > 0 && <div className="section-label">Teams</div>}
+                {pickedSection.teams.length > 0 && (
+                  <div className="list-box">
+                    {pickedSection.teams.map((t) => (
+                      <button key={t.id} className="member" onClick={() => setSel({ kind: 'team', id: t.id })}>
+                        <span className="dot" style={{ background: t.color, width: 7, height: 7 }} />
+                        <span style={{ flex: 1 }}>
+                          <div className="t">{t.label}</div>
+                          <div className="s">
+                            {plural(t.members.length, 'console')} · {workingIn(t.members)} working
+                          </div>
+                        </span>
+                        <ChevronRight size={15} color="var(--faint)" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {pickedSection.singles.length > 0 && <div className="section-label">Consoles</div>}
+                {pickedSection.singles.length > 0 && <MemberList members={pickedSection.singles} statusOf={statusOf} onPick={(id) => setSel({ kind: 'console', id })} />}
+                <div className="mm-hint">
+                  {pickedSection.kind === 'orch'
+                    ? "Command these agents from the orchestrator's own composer, or wire more with Connect."
+                    : 'Not wired to any orchestrator: the command bar reaches them one by one. Wire them to an orchestrator to command them together.'}
                 </div>
-                <div className="mm-hint">Reach a whole team from the command bar with @ and its name.</div>
-              </>
-            ) : sel?.kind === 'center' ? (
-              <>
-                <SideHead icon={<Command size={20} />} title="Command center" sub={plural(loose.length, 'console')} />
-                <button className="btn primary wide" onClick={() => jump(loose.map((m) => m.id))}>
-                  <Crosshair size={15} /> Frame them on the board
-                </button>
-                <div className="section-label">Consoles</div>
-                <MemberList members={loose} statusOf={statusOf} onPick={(id) => setSel({ kind: 'console', id })} />
-                <div className="mm-hint">Not in any team: the command bar reaches them one by one. Group them to give them an orchestrator.</div>
               </>
             ) : (
               <>
@@ -333,7 +354,7 @@ export function MissionMap() {
                   {(
                     [
                       ['Orchestrators', orchestrators],
-                      ['Teams', teams.length],
+                      ['Teams', groups.length],
                       ['Consoles', all.length],
                       ['Active loops', activeLoops],
                     ] as const
@@ -344,7 +365,10 @@ export function MissionMap() {
                     </div>
                   ))}
                 </div>
-                <div className="mm-hint">Select a console, a team or a commander to see what it is doing and act on it.</div>
+                <div className="mm-hint">
+                  Select a console, a team or a commander to see what it is doing and act on it.
+                  {center && !orchestrators ? ' Add an orchestrator from the right toolbar to command teams together.' : ''}
+                </div>
               </>
             )}
           </div>
@@ -354,7 +378,22 @@ export function MissionMap() {
   )
 }
 
-function Ring({ part, of }: { part: number; of: number }) {
+const pickedTeamOf = (n: Node<ConsoleData>, sections: Section[]) => sections.flatMap((s) => s.teams).find((t) => t.members.some((m) => m.id === n.id))
+
+function SectionRow({ section, note, onPick }: { section: Section; note?: string; onPick: () => void }) {
+  return (
+    <button className="member" onClick={onPick}>
+      {section.kind === 'orch' ? <span className="orb sm" /> : <Command size={15} color="var(--muted)" />}
+      <span style={{ flex: 1 }}>
+        <div className="t">{section.label}</div>
+        <div className="s">{note ?? (section.kind === 'orch' ? plural(agentsOf(section).length, 'agent') : 'Not wired to any orchestrator')}</div>
+      </span>
+      <ChevronRight size={15} color="var(--faint)" />
+    </button>
+  )
+}
+
+export function Ring({ part, of }: { part: number; of: number }) {
   const c = 2 * Math.PI * 5
   return (
     <svg width="13" height="13" viewBox="0 0 13 13">
@@ -407,12 +446,12 @@ function ConsoleDetail(props: {
   node: Node<ConsoleData>
   status: string
   team?: Team
+  section?: Section
   onTeam: (id: string) => void
-  onOrch: () => void
-  onCenter: () => void
+  onSection: (id: string) => void
   onJump: () => void
 }) {
-  const { node, status, team } = props
+  const { node, status, team, section } = props
   const session = useStore((s) => s.live[node.id])
   const now = useNow()
   return (
@@ -443,34 +482,22 @@ function ConsoleDetail(props: {
       </div>
       <div className="section-label plain">Belongs to</div>
       <div className="list-box">
-        {team ? (
-          <>
-            <button className="member" onClick={() => props.onTeam(team.id)}>
-              <span className="dot" style={{ background: team.color, width: 7, height: 7 }} />
-              <span style={{ flex: 1 }}>
-                <div className="t">{team.label}</div>
-                <div className="s">{plural(team.members.length, 'console')}</div>
-              </span>
-              <ChevronRight size={15} color="var(--faint)" />
-            </button>
-            <button className="member" onClick={props.onOrch}>
-              <Network size={15} color="var(--accent)" />
-              <span style={{ flex: 1 }}>
-                <div className="t">Orchestrator</div>
-                <div className="s">Through the team</div>
-              </span>
-              <ChevronRight size={15} color="var(--faint)" />
-            </button>
-          </>
-        ) : (
-          <button className="member" onClick={props.onCenter}>
-            <Command size={15} color="var(--muted)" />
+        {team && (
+          <button className="member" onClick={() => props.onTeam(team.id)}>
+            <span className="dot" style={{ background: team.color, width: 7, height: 7 }} />
             <span style={{ flex: 1 }}>
-              <div className="t">Command center</div>
-              <div className="s">Not wired to any orchestrator</div>
+              <div className="t">{team.label}</div>
+              <div className="s">{plural(team.members.length, 'console')}</div>
             </span>
             <ChevronRight size={15} color="var(--faint)" />
           </button>
+        )}
+        {section && (
+          <SectionRow
+            section={section}
+            note={section.kind === 'orch' ? (team ? 'Through the team' : 'Wired directly') : undefined}
+            onPick={() => props.onSection(section.id)}
+          />
         )}
       </div>
     </>

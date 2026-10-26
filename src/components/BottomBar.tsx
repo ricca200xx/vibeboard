@@ -3,7 +3,7 @@ import { ArrowUp, ChevronUp, Mic, Minus, Plus, RotateCw, Square, X } from 'lucid
 import { consoles, EMPTY, useStore, workspace } from '../store'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
-import { runPlanner } from '../planner'
+import { command, mentionTargets } from '../planner'
 import { TEAMS } from '../teams'
 
 const CHIPS = {
@@ -233,30 +233,17 @@ function Presets() {
 
 type Recognition = { start: () => void; stop: () => void; onresult: (e: any) => void; onend: () => void; interimResults: boolean; continuous: boolean; lang: string }
 
-function CommandBar() {
-  const nodes = useStore((s) => workspace(s)?.nodes ?? EMPTY)
-  const [text, setText] = useState('')
-  const [mention, setMention] = useState<string | null>(null)
-  const [history, setHistory] = useState<string[]>([])
-  const [showHistory, setShowHistory] = useState(false)
+// Browser dictation into a text field: what is said is appended to what was typed.
+// start() says whether dictation began (it is missing in some browsers).
+export function useDictation(text: string, setText: (t: string) => void) {
   const [listening, setListening] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [reply, setReply] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
   const recRef = useRef<Recognition | null>(null)
-  const fromVoice = useRef(false)
-
-  const targets = useMemo(() => {
-    const list = consoles(nodes).map((n) => ({ name: n.data.name, ids: [n.id], agent: n.data.agent }))
-    const groups = nodes
-      .filter((n) => n.type === 'group')
-      .map((g) => ({ name: String((g.data as { label: string }).label), ids: nodes.filter((n) => n.parentId === g.id && n.type === 'console').map((n) => n.id), agent: '' }))
-    return [...list, ...groups, { name: 'all', ids: consoles(nodes).map((n) => n.id), agent: '' }]
-  }, [nodes])
-
-  const startVoice = () => {
+  const start = () => {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-    if (!SR) return useStore.getState().notify('Dictation is not available in this browser')
+    if (!SR) {
+      useStore.getState().notify('Dictation is not available in this browser')
+      return false
+    }
     const rec: Recognition = new SR()
     rec.interimResults = true
     rec.continuous = true
@@ -266,12 +253,34 @@ function CommandBar() {
     rec.onend = () => setListening(false)
     rec.start()
     recRef.current = rec
-    fromVoice.current = true
     setListening(true)
+    return true
   }
-  const stopVoice = () => {
+  const stop = () => {
     recRef.current?.stop()
     setListening(false)
+  }
+  return { listening, start, stop, recRef }
+}
+
+function CommandBar() {
+  const nodes = useStore((s) => workspace(s)?.nodes ?? EMPTY)
+  const [text, setText] = useState('')
+  const [mention, setMention] = useState<string | null>(null)
+  const [history, setHistory] = useState<string[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [reply, setReply] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const fromVoice = useRef(false)
+  const { listening, start, stop, recRef } = useDictation(text, setText)
+  const targets = useMemo(() => mentionTargets(), [nodes])
+
+  const startVoice = () => {
+    fromVoice.current = start()
+  }
+  const stopVoice = () => {
+    stop()
     inputRef.current?.focus()
   }
 
@@ -309,31 +318,13 @@ function CommandBar() {
     setHistory((h) => [raw, ...h.filter((x) => x !== raw)].slice(0, 20))
     setText('')
     setMention(null)
-    const s = useStore.getState()
-    // Longest names first so "@Maya 2" wins over "@Maya".
-    const sorted = [...targets].sort((a, b) => b.name.length - a.name.length)
-    let rest = raw
-    const ids = new Set<string>()
-    for (const t of sorted) {
-      // Unicode-aware end of name: `\b` fails after "Niccolò", "Team (A)" or "C++".
-      const re = new RegExp(`@${t.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}_])`, 'giu')
-      if (re.test(rest)) {
-        t.ids.forEach((id) => ids.add(id))
-        rest = rest.replace(re, '').trim()
-      }
-    }
-    if (ids.size) {
-      const sent = s.sendTo([...ids], rest)
-      say(sent ? `Sent to ${sent} console${sent > 1 ? 's' : ''}` : 'None of those consoles is running')
-    } else {
-      setBusy(true)
-      try {
-        say(await runPlanner(raw))
-      } catch (e) {
-        say(`Planner failed: ${(e as Error).message}`)
-      } finally {
-        setBusy(false)
-      }
+    setBusy(true)
+    try {
+      say(await command(raw))
+    } catch (e) {
+      say(`Planner failed: ${(e as Error).message}`)
+    } finally {
+      setBusy(false)
     }
     fromVoice.current = false
   }

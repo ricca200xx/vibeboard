@@ -135,7 +135,7 @@ export function TopBar() {
           </>
         )}
       </button>
-      <button className="icon-btn" title="Presets" onClick={() => s.set({ modal: useStore.getState().modal === 'presets' ? null : 'presets' })}>
+      <button className="icon-btn" title="Mission Map" onClick={() => s.set({ modal: useStore.getState().modal === 'mission' ? null : 'mission' })}>
         <Briefcase size={17} />
       </button>
       <button className="icon-btn" title="Settings" onClick={() => s.set({ modal: 'settings' })}>

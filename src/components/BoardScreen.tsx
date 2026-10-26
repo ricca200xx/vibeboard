@@ -25,7 +25,7 @@ import {
   Plus,
   Repeat,
   RotateCcwClock,
-  Settings2,
+  Orbit,
   Type,
   X,
   Check,
@@ -39,7 +39,8 @@ import { api } from '../api'
 import { absolute, consoles, project, useStore, workspace, type ConsoleData, type Tool } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
-import { HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
+import { CommandEdge, HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
+import { OrchestratorNode } from './Orchestrator'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
 import { BoardNode, CalendarNode, ChecklistNode, NEW_BOARD } from './Planner'
@@ -68,9 +69,10 @@ const nodeTypes = {
   image: ImageNode,
   ink: InkNode,
   memory: MemoryCard,
+  orchestrator: OrchestratorNode,
 }
 
-const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge }
+const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge, command: CommandEdge }
 
 const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
 
@@ -153,7 +155,7 @@ function Board() {
       const t = e.target as HTMLElement
       if (t.closest('input, textarea, [contenteditable], .xterm')) return
       const s = useStore.getState()
-      if (e.key === 'Escape') s.set({ tool: 'select', modal: null })
+      if (e.key === 'Escape') s.set({ tool: 'select', modal: null, connecting: null })
       if (e.key === 'Backspace' || e.key === 'Delete') {
         workspace(s)
           ?.nodes.filter((n) => n.selected && n.type !== 'console')
@@ -450,7 +452,7 @@ function RightToolbar() {
   const items = [
     { icon: <Layers size={18} />, tip: 'Mission map', run: () => s.set({ modal: 'mission' }) },
     { icon: <ListChecks size={18} />, tip: 'To-do', run: () => setTodo((v) => !v) },
-    { icon: <Settings2 size={18} />, tip: 'Settings', run: () => s.set({ modal: 'settings' }) },
+    { icon: <Orbit size={18} />, tip: 'Orchestrator', run: () => addOrchestrator() },
     { icon: <Folder size={18} />, tip: 'Open in Finder', run: () => api.reveal(project(useStore.getState())!.path) },
     { icon: <FileText size={18} />, tip: 'Memory', run: () => s.set({ modal: 'memory' }) },
     { icon: <Repeat size={18} />, tip: 'Loops', run: () => s.set({ modal: 'loops' }) },
@@ -468,6 +470,15 @@ function RightToolbar() {
       ))}
     </div>
   )
+}
+
+// An orchestrator lands in the middle of the view with Connect already on: wiring is the next step.
+function addOrchestrator() {
+  const s = useStore.getState()
+  const c = s.viewCenter()
+  const id = nid('o')
+  s.addNode({ id, type: 'orchestrator', position: { x: c.x - 190, y: c.y - 230 }, style: { width: 380, height: 460 }, data: {} })
+  s.set({ connecting: id })
 }
 
 // Drops a fresh checklist, board or calendar in the middle of the view.

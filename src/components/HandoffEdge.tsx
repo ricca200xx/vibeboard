@@ -5,7 +5,7 @@ import { useStore, type HandoffData } from '../store'
 
 // The wire leaves and enters on the sides facing each other, wherever the consoles are now
 // (groups re-flow them), instead of always right -> left looping around the board.
-function facingSides(a: InternalNode, b: InternalNode) {
+export function facingSides(a: InternalNode, b: InternalNode) {
   const box = (n: InternalNode) => {
     const { x, y } = n.internals.positionAbsolute
     const w = n.measured.width ?? 0
@@ -92,4 +92,19 @@ export function MemoryEdge({ id, source, target, ...geo }: EdgeProps) {
   const b = useInternalNode(target)
   const [path] = getBezierPath(a && b ? facingSides(a, b) : geo)
   return <BaseEdge id={id} path={path} className="memory-edge" />
+}
+
+// An orchestrator's command wire: a warm curve with a pulse running toward the agents it drives.
+export function CommandEdge({ id, source, target, ...geo }: EdgeProps) {
+  const a = useInternalNode(source)
+  const b = useInternalNode(target)
+  const [path] = getBezierPath(a && b ? facingSides(a, b) : geo)
+  return (
+    <>
+      <BaseEdge id={id} path={path} className="command-edge" />
+      <circle r={3.5} className="command-pulse">
+        <animateMotion dur="2.8s" repeatCount="indefinite" path={path} />
+      </circle>
+    </>
+  )
 }
