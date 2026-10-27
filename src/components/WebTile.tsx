@@ -1,11 +1,13 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, Plus, RotateCw, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Bug, ExternalLink, Globe, Plus, RotateCw, X } from 'lucide-react'
 import { api } from '../api'
 import { useStore, type WebData, type WebTab } from '../store'
 import { toUrl } from '../../shared/url.js'
 
 const uid = () => crypto.randomUUID().slice(0, 8)
+// Present only inside the desktop app (desktop/preload.cjs).
+const desktop = (window as unknown as { vibeboardDesktop?: { inspect: (x: number, y: number) => void } }).vibeboardDesktop
 // Page sizes: the page is laid out at that size and scaled down to the tile.
 const VIEWPORTS: [string, string][] = [
   ['Fit', 'Fit the tile'],
@@ -153,6 +155,18 @@ function WebTileImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
             </button>
             {sizes && <SizeMenu current={viewport} onPick={(v) => (save({ viewport: v }), setSizes(false))} onClose={() => setSizes(false)} />}
           </span>
+          {active.url && desktop && (
+            <button
+              className="icon-btn sm"
+              title="Inspect this page"
+              onClick={(e) => {
+                const frame = e.currentTarget.closest('.web-tile')?.querySelector('.wt-frame')?.getBoundingClientRect()
+                if (frame) desktop.inspect(frame.x + frame.width / 2, frame.y + frame.height / 2)
+              }}
+            >
+              <Bug size={13} />
+            </button>
+          )}
           {active.url && (
             <a className="icon-btn sm" title="Open in your browser" href={active.url} target="_blank" rel="noreferrer">
               <ExternalLink size={13} />
@@ -245,7 +259,7 @@ function StartPage({ onOpen }: { onOpen: (url: string) => void }) {
           </button>
         ))}
       </div>
-      <p className="hint">Some sites refuse to be shown inside another page; open those in your browser.</p>
+      {!desktop && <p className="hint">In the browser some sites (Google, GitHub…) refuse to be shown inside another page: open them in your browser, or use the desktop app (npm run desktop), where every site loads.</p>}
     </div>
   )
 }

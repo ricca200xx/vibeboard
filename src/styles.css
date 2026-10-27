@@ -5261,3 +5261,23 @@ textarea.field {
   font-size: 12px;
   outline: 0;
 }
+/* ---------- desktop app (Electron): the top bar is the title bar ---------- */
+body.desktop::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 12px;
+  z-index: 200;
+  -webkit-app-region: drag;
+}
+.desktop .topbar {
+  -webkit-app-region: drag;
+}
+.desktop .topbar button,
+.desktop .topbar a,
+.desktop .topbar input,
+.desktop .topbar .menu {
+  -webkit-app-region: no-drag;
+}

@@ -54,6 +54,16 @@ npm run build
 npm start          # serves the app on http://127.0.0.1:4317
 ```
 
+Desktop app (Electron, macOS): a real window where web tiles open any site, Google included, and
+have an inspector. It starts the same server with your own Node, or reuses one already running:
+
+```bash
+npm run desktop
+```
+
+If npm skipped Electron's download (some npm setups block install scripts), fetch it once with
+`node node_modules/electron/install.js`.
+
 Tests (start their own server on a throwaway home folder):
 
 ```bash
@@ -72,8 +82,8 @@ the lead's own permission mode (YOLO only if the lead is), and a lead runs at mo
 ## Roadmap
 
 1. **Studios**: documents, diagrams and a code tree generated from the repo, onto the board.
-2. **Native macOS app**: a real window with Dock icon, menu bar, shortcuts, notifications, a signed
-   `.dmg` and auto-update.
+2. **Native macOS app**: the Electron window exists (`npm run desktop`); still to come: Dock icon,
+   notifications, a signed `.dmg` and auto-update.
 3. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,
    light and dark mode.
 4. **Public release**: contribution guide, CI, tagged releases.

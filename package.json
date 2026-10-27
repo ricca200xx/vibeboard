@@ -8,6 +8,7 @@
     "dev": "node --watch server/index.mjs & vite",
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production node server/index.mjs",
+    "desktop": "vite build && electron desktop/main.cjs",
     "test": "node --test 'test/*.test.mjs' && node server/usage.mjs && node server/scan.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
@@ -29,6 +30,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron": "44.9.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
   }
