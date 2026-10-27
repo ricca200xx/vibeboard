@@ -32,6 +32,9 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
 - **Memory.** Per-repo notes (or facts scanned from the repo) pushed into consoles as context.
 - **Git without a terminal.** The branch pill lists what changed, saves a snapshot (commit) with a
   note you write or Claude writes from the diff, and pushes or pulls (fast-forward only).
+- **Studios.** *Code*: browse and edit the repo, put a file on the board as a card. *Documents*: your
+  CLI reads the repo (read-only) and writes an overview, onboarding guide, architecture, README, API
+  reference, data model or security overview, live on a page you can place on the board or export as PDF.
 - **Mission map, notes, sketches, web tiles, kanban, usage stats** and multiple workspaces per project.
 
 ## Requirements

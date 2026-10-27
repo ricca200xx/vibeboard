@@ -42,6 +42,10 @@ export type Limits = { at: number; limits: { title: string; pct: number; resets:
 
 // A repo scan in progress or waiting for review. step: 0 launch, 1 read the repo, 2 write facts, 3 wrap up.
 export type Fact = { kind: string; title: string; text: string }
+// A document being written by the Documents studio, and one kept in the repo's library.
+export type DocJob = { id: string; cwd: string; doc: string; title: string; agent: string; depth: Depth; startedAt: number; step: number; text: string; status: 'running' | 'done' | 'failed'; error: string | null }
+export type DocEntry = { id: string; template: string; ask?: string; title: string; agent: string; depth: Depth; createdAt: number; ms: number; words: number }
+export type Depth = 'quick' | 'balanced' | 'thorough'
 export type Scan = { id: string; cwd: string; agent: string; startedAt: number; step: number; facts: Fact[]; status: 'running' | 'done' | 'failed'; error: string | null }
 
 export type Loop = {
@@ -86,6 +90,10 @@ export const api = {
   reveal: (cwd: string) => call('POST', '/api/reveal', { cwd }),
   scan: (cwd: string, agent: string) => call<Scan>('POST', '/api/scan', { cwd, agent }),
   clearScan: (cwd: string) => call('DELETE', `/api/scan?cwd=${encodeURIComponent(cwd)}`),
+  docs: (cwd: string) => call<{ docs: DocEntry[]; timed: Record<Depth, number | null> }>('GET', `/api/docs?cwd=${encodeURIComponent(cwd)}`),
+  readDoc: (cwd: string, id: string) => call<DocEntry & { text: string }>('GET', `/api/docs/read?cwd=${encodeURIComponent(cwd)}&id=${encodeURIComponent(id)}`),
+  writeDoc: (cwd: string, o: { template: string; ask?: string; agent: string; depth: Depth }) => call<DocJob>('POST', '/api/docs', { cwd, ...o }),
+  clearDoc: (cwd: string) => call('DELETE', `/api/docs?cwd=${encodeURIComponent(cwd)}`),
   plan: (command: string, board: unknown) => call<{ reply: string; actions: import('./planner').PlanAction[] }>('POST', '/api/plan', { command, board }),
   handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string; mode?: LinkMode; pattern?: string }) =>
     call<{ ok: boolean; duplicate?: boolean; sent?: boolean; approved?: boolean }>('POST', '/api/handoff', body),
@@ -113,6 +121,7 @@ export type ServerEvent =
   | { type: 'session-id'; id: string; sessionId: string; prompted: boolean }
   | { type: 'loops'; loops: Loop[] }
   | { type: 'scans'; scans: Scan[] }
+  | { type: 'docs'; docs: DocJob[] }
   | { type: 'subagents'; id: string; subagents: Subagent[] }
   | { type: 'handoff'; from: string; to: string; state: 'summarizing' | 'sent' | 'failed' }
   | { type: 'helper'; parent: string; id: string; name: string; agent: string; role: string; cwd: string; yolo: boolean }

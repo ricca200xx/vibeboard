@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from '@xyflow/react'
-import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type Scan, type ServerEvent, type Status } from './api'
+import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type DocJob, type Scan, type ServerEvent, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
@@ -101,6 +101,7 @@ type S = {
   installed: string[]
   loops: Loop[]
   scans: Scan[]
+  docJobs: DocJob[]
   tool: Tool
   spawnAgent: string
   shapeKind: ShapeKind
@@ -352,6 +353,7 @@ export const useStore = create<S>((set, get) => {
     installed: ['claude', 'shell'],
     loops: [],
     scans: [],
+    docJobs: [],
     tool: 'select',
     spawnAgent: 'claude',
     shapeKind: 'rect',
@@ -424,6 +426,7 @@ export const useStore = create<S>((set, get) => {
           })
         } else if (e.type === 'loops') set({ loops: e.loops })
         else if (e.type === 'scans') set({ scans: e.scans })
+        else if (e.type === 'docs') set({ docJobs: e.docs })
         else if (e.type === 'handoff')
           set((s) => {
             const handing = { ...s.handing }

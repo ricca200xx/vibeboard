@@ -15,6 +15,7 @@ import { readTranscript } from './transcript.mjs'
 import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
 import { createScans } from './scan.mjs'
+import { createDocs } from './docs.mjs'
 import * as files from './files.mjs'
 import { approved, linkMessage, matches } from '../shared/links.js'
 
@@ -282,10 +283,9 @@ function resize(s, cols, rows) {
 }
 
 const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
-const scans = createScans({
-  broadcast,
-  launch: (command, cwd) => spawn(SHELL, ['-lic', command], { cwd, env: CLEAN_ENV, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
-})
+const launchCli = (command, cwd) => spawn(SHELL, ['-lic', command], { cwd, env: CLEAN_ENV, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+const scans = createScans({ broadcast, launch: launchCli })
+const docs = createDocs({ dir: path.join(DATA_DIR, 'docs'), broadcast, launch: launchCli })
 
 // What a helper said last: its final reply when there is a transcript, otherwise its screen.
 const lastWords = (s) => {
@@ -779,6 +779,21 @@ const server = http.createServer(async (req, res) => {
       scans.clear(url.searchParams.get('cwd'))
       return json(res, 200, { ok: true })
     }
+    if (route === 'docs') {
+      const cwd = url.searchParams.get('cwd')
+      try {
+        if (req.method === 'POST') {
+          const body = JSON.parse(await readBody(req, 64 * 1024))
+          if (!isDir(body.cwd)) return json(res, 400, { error: 'not a directory' })
+          return json(res, 200, docs.start(body.cwd, body))
+        }
+        if (req.method === 'DELETE') return (docs.clear(cwd), json(res, 200, { ok: true }))
+        if (id === 'read') return json(res, 200, docs.read(cwd, url.searchParams.get('id')))
+        return json(res, 200, docs.library(cwd))
+      } catch (e) {
+        return json(res, 400, { error: e.message })
+      }
+    }
     if (route === 'plan' && req.method === 'POST') {
       const { command, board } = JSON.parse(await readBody(req, 512 * 1024))
       const prompt = [
@@ -912,6 +927,7 @@ function attachEvents(ws) {
   ws.send(JSON.stringify({ type: 'sessions', sessions: [...sessions.values()].map(summary) }))
   ws.send(JSON.stringify({ type: 'loops', loops: loops.list() }))
   ws.send(JSON.stringify({ type: 'scans', scans: scans.list() }))
+  ws.send(JSON.stringify({ type: 'docs', docs: docs.list() }))
   ws.on('close', () => eventClients.delete(ws))
 }
 
