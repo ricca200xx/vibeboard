@@ -15,6 +15,7 @@ import { readTranscript } from './transcript.mjs'
 import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
 import { createScans } from './scan.mjs'
+import * as files from './files.mjs'
 import { approved, linkMessage, matches } from '../shared/links.js'
 
 const PORT = Number(process.env.PORT) || 4317
@@ -818,6 +819,22 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (route === 'git') return json(res, 200, await gitInfo(url.searchParams.get('cwd')))
+    if (route === 'files') {
+      try {
+        if (req.method === 'POST' && id === 'write') {
+          const { root, path: rel, text, create } = JSON.parse(await readBody(req, 2 * 1024 * 1024))
+          if (!isDir(root)) throw new Error('not a directory')
+          return json(res, 200, files.write(root, rel, text, !!create))
+        }
+        const root = url.searchParams.get('root')
+        if (!isDir(root)) throw new Error('not a directory')
+        if (id === 'tree') return json(res, 200, files.tree(root, url.searchParams.get('only') === 'md' ? /\.(md|mdx|markdown)$/i : undefined))
+        if (id === 'read') return json(res, 200, files.read(root, url.searchParams.get('path')))
+        throw new Error('unknown files call')
+      } catch (e) {
+        return json(res, 400, { error: e.message })
+      }
+    }
     if (route === 'ports') {
       const asked = (url.searchParams.get('ports') ?? '').split(',').map(Number).filter((p) => Number.isInteger(p) && p > 0 && p < 65536)
       return json(res, 200, await Promise.all((asked.length ? asked.slice(0, 20) : DEV_PORTS).map(probePort)))

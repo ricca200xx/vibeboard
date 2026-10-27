@@ -5281,3 +5281,224 @@ body.desktop::before {
 .desktop .topbar .menu {
   -webkit-app-region: no-drag;
 }
+/* ---------- studios (code, documents, markdown) ---------- */
+.modal.studio {
+  width: min(1180px, calc(100vw - 120px));
+  height: min(760px, calc(100vh - 120px));
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  padding: 0;
+  overflow: hidden;
+}
+.studio-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.012);
+}
+.studio-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 12px 12px 16px;
+}
+.studio-title .ico {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+.studio-title b {
+  display: block;
+  font-size: 17px;
+}
+.studio-title small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.studio-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 8px 16px;
+}
+.ft-root {
+  margin: 10px 6px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  font-weight: 600;
+}
+.ft-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 27px;
+  padding-right: 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-2);
+  text-align: left;
+  white-space: nowrap;
+}
+.ft-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ft-row:hover {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+}
+.ft-row.on {
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.ft-row .chev {
+  color: var(--faint);
+  margin-left: -15px;
+}
+.path-input {
+  margin: 0 12px 8px;
+}
+.path-input input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--panel-3);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: 0;
+}
+.studio-bar .path-input {
+  margin: 0;
+  width: 280px;
+}
+.studio-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.studio-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 12px 16px;
+  border-bottom: 1px solid var(--line);
+  min-height: 56px;
+}
+.studio-bar .crumbs {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.studio-bar .crumbs span:not(:last-child)::after {
+  content: '›';
+  margin-left: 4px;
+  color: var(--faint);
+}
+.studio-bar .crumbs .last {
+  color: var(--text);
+  font-weight: 600;
+}
+.lang-chip {
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  background: rgba(74, 139, 240, 0.14);
+  color: #8fb6ff;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  flex: none;
+}
+.studio-bar .meta {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.studio-bar .edited {
+  font-size: 11.5px;
+  color: #e0a43a;
+  white-space: nowrap;
+}
+.studio-error {
+  margin: 10px 14px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: rgba(255, 107, 90, 0.1);
+  color: #ff8a7a;
+  font-size: 12.5px;
+}
+.studio-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 8px 8px 8px 12px;
+  border-radius: 9px;
+  background: rgba(224, 164, 58, 0.1);
+  color: #f0c46a;
+  font-size: 12.5px;
+}
+.studio-editor {
+  flex: 1;
+  min-height: 0;
+  margin: 10px 12px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #151413;
+  overflow: hidden;
+}
+.studio-empty {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+.studio-empty b {
+  color: var(--text);
+  font-size: 15px;
+}
+.code-view {
+  height: 100%;
+  cursor: text;
+}
+.code-view .cm-editor {
+  height: 100%;
+}
+.code-card .card-head {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 10px 10px 14px;
+}
+.code-card-body {
+  flex: 1;
+  min-height: 0;
+  background: #151413;
+}

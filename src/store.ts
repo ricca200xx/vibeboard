@@ -61,7 +61,7 @@ export type Project = { path: string; name: string; workspaces: Workspace[]; act
 export type Preset = { id: string; name: string; agents: string[]; label?: string }
 
 export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban' | 'shape'
-export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer' | 'presets' | 'settings'
+export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer' | 'presets' | 'settings' | 'code' | 'documents' | 'markdown'
 // A second sign-in of a CLI (its own config folder on disk), so two accounts can run side by side.
 export type Profile = { id: string; name: string; agent: string }
 // `active`: the profile each CLI's new consoles start on (none: the CLI's own default sign-in).

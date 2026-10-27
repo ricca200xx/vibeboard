@@ -37,11 +37,12 @@ import {
 } from 'lucide-react'
 import { api } from '../api'
 import { addImage, addOrchestrator, insertCard, nid } from '../board'
-import { absolute, consoles, project, useStore, workspace, type ConsoleData, type Tool } from '../store'
+import { absolute, consoles, useStore, workspace, type ConsoleData, type Tool } from '../store'
 import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
 import { CommandEdge, HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
 import { OrchestratorNode } from './Orchestrator'
+import { CodeNode, CodeStudio } from './CodeStudio'
 import { ContextMenu, type MenuAt } from './ContextMenu'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
@@ -72,6 +73,7 @@ const nodeTypes = {
   ink: InkNode,
   memory: MemoryCard,
   orchestrator: OrchestratorNode,
+  code: CodeNode,
 }
 
 const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge, command: CommandEdge }
@@ -109,6 +111,7 @@ export function BoardScreen() {
         {modal === 'memory' && <MemoryModal />}
         {modal === 'settings' && <SettingsModal />}
         {modal === 'usage' && <UsagePanel />}
+        {modal === 'code' && <CodeStudio />}
       </div>
     </ReactFlowProvider>
   )
@@ -439,7 +442,7 @@ function RightToolbar() {
     { icon: <Layers size={18} />, tip: 'Mission map', run: () => s.set({ modal: 'mission' }) },
     { icon: <ListChecks size={18} />, tip: 'To-do', run: () => setTodo((v) => !v) },
     { icon: <Orbit size={18} />, tip: 'Orchestrator', run: () => addOrchestrator() },
-    { icon: <Folder size={18} />, tip: 'Open in Finder', run: () => api.reveal(project(useStore.getState())!.path) },
+    { icon: <Folder size={18} />, tip: 'Code', run: () => s.set({ modal: 'code' }) },
     { icon: <FileText size={18} />, tip: 'Memory', run: () => s.set({ modal: 'memory' }) },
     { icon: <Repeat size={18} />, tip: 'Loops', run: () => s.set({ modal: 'loops' }) },
   ]

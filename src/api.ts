@@ -20,6 +20,8 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 export type Subagent = { id: string; type: string; task: string; status: 'running' | 'done'; startedAt: number; endedAt?: number }
 export type LiveSession = { id: string; agent: string; status: Status; statusAt?: number; cwd: string; paused: boolean; subagents?: Subagent[] }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
+// A project folder as the Studios see it (server/files.mjs).
+export type FileEntry = { name: string; path: string; dir?: boolean; children?: FileEntry[] }
 // What a wire sends: see shared/links.js.
 export type LinkMode = 'brief' | 'reply' | 'review' | 'feedback' | 'context'
 export type GitInfo = {
@@ -94,6 +96,9 @@ export const api = {
   removeLoop: (id: string) => call('DELETE', `/api/loops/${id}`),
   visible: (ids: string[]) => call('POST', '/api/visible', { ids }),
   ports: () => call<{ port: number; live: boolean }[]>('GET', '/api/ports'),
+  tree: (root: string, only?: 'md') => call<{ entries: FileEntry[]; truncated: boolean }>('GET', `/api/files/tree?root=${encodeURIComponent(root)}${only ? '&only=md' : ''}`),
+  readFile: (root: string, path: string) => call<{ path: string; text: string; size: number }>('GET', `/api/files/read?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`),
+  writeFile: (root: string, path: string, text: string, create = false) => call<{ path: string; size: number }>('POST', '/api/files/write', { root, path, text, create }),
   pageTitle: (url: string) => call<{ title: string }>('GET', `/api/page-title?url=${encodeURIComponent(url)}`),
 }
 
