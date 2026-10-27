@@ -281,6 +281,32 @@ test('the git panel saves a snapshot, publishes the branch and pulls', async () 
   assert.equal((await git('pull')).status, 200)
   assert.ok(fs.existsSync(path.join(repo, 'b.txt')))
   assert.equal((await git('rebase')).status, 400, 'only the panel actions exist')
+
+  // Seeing the changes: one file's diff, a brand new file, a commit; then branches and discard.
+  const view = async (what, q) => (await api('GET', `/api/git/${what}?cwd=${encodeURIComponent(repo)}&${q}`)).json()
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\nTWO\n')
+  fs.writeFileSync(path.join(repo, 'new.txt'), 'fresh\n')
+  assert.match((await view('diff', 'path=a.txt')).text, /-two\n\+TWO/)
+  assert.equal((await view('diff', 'path=new.txt')).text, '@@ -0,0 +1,1 @@\n+fresh')
+  assert.ok((await view('diff', 'path=nothere.txt')).error, 'only changed files have a diff')
+  const head = (await info()).commits[0]
+  const shown = await view('show', `hash=${head.hash}`)
+  assert.equal(shown.subject, head.subject)
+  assert.match(shown.text, /diff --git/)
+  assert.ok((await view('show', 'hash=;rm')).error, 'a commit is a hash, nothing else')
+  assert.equal((await git('discard', undefined, ['a.txt', 'new.txt'])).status, 200)
+  assert.equal(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'), 'one\ntwo\n')
+  assert.ok(!fs.existsSync(path.join(repo, 'new.txt')))
+  const branch = (b) => api('POST', '/api/git/branch', { cwd: repo, branch: b })
+  assert.equal((await branch({ name: 'feat/try it' })).status, 400, 'git rules for branch names hold')
+  assert.equal((await branch({ name: 'feat/try', create: true })).status, 200)
+  assert.equal((await info()).branch, 'feat/try')
+  assert.ok((await view('branches', '')).branches.includes('feat/try'))
+  // A folder that is not a repository yet can become one.
+  const plain = fs.mkdtempSync(path.join(HOME, 'plain-'))
+  assert.equal(await (await api('GET', `/api/git?cwd=${encodeURIComponent(plain)}`)).json(), null)
+  assert.equal((await api('POST', '/api/git/init', { cwd: plain })).status, 200)
+  assert.equal((await api('POST', '/api/git/init', { cwd: plain })).status, 400, 'already a repository')
 })
 
 test('kill escalates past processes that ignore SIGHUP', async () => {

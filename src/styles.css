@@ -4912,3 +4912,240 @@ textarea.field {
   top: auto;
   bottom: 34px;
 }
+/* ---------- git: changes, commits, branches ---------- */
+.git-file {
+  padding: 2px 4px 2px 8px;
+}
+.git-file.open {
+  background: var(--accent-soft);
+}
+.git-file .git-check {
+  flex: none;
+}
+.git-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 4px;
+  border-radius: 7px;
+  text-align: left;
+}
+.git-lines {
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.git-scroll .commit,
+.git-recent {
+  width: 100%;
+  text-align: left;
+  border-radius: 8px;
+}
+.git-scroll .commit:hover,
+.git-recent:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.gh-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  margin-left: -6px;
+  border-radius: 6px;
+  color: inherit;
+}
+.gh-branch:hover {
+  background: var(--panel-3);
+}
+.git-pill.muted {
+  color: var(--muted);
+}
+.git-init {
+  gap: 10px;
+  padding: 14px;
+}
+.git-drawer {
+  bottom: 48px;
+  left: 422px;
+  width: min(900px, calc(100vw - 560px));
+  height: min(640px, calc(100vh - 140px));
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+.gd-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.gd-head .t {
+  font-weight: 600;
+  font-size: 14px;
+  font-family: var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gd-head .s {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.gd-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.gd-body {
+  margin: 0;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow: auto;
+}
+.gd-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 12px;
+}
+.gd-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.gd-note.bad {
+  color: #ff8a7a;
+}
+.gd-fname {
+  position: sticky;
+  top: -6px;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(26, 25, 23, 0.98);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  text-align: left;
+}
+.gd-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.gd-table td {
+  padding: 0 8px;
+  vertical-align: top;
+}
+.gd-table .no {
+  width: 1%;
+  min-width: 38px;
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+  white-space: nowrap;
+}
+.gd-table .code {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-2);
+}
+.gd-table .sign {
+  display: inline-block;
+  width: 14px;
+  color: var(--faint);
+  user-select: none;
+}
+.gd-table tr.add {
+  background: rgba(62, 207, 142, 0.09);
+}
+.gd-table tr.add .code,
+.gd-table tr.add .sign {
+  color: #8ee6b6;
+}
+.gd-table tr.del {
+  background: rgba(239, 68, 68, 0.09);
+}
+.gd-table tr.del .code,
+.gd-table tr.del .sign {
+  color: #ff9b8f;
+}
+.gd-table tr.hunk td {
+  padding: 4px 14px;
+  color: #8fb6ff;
+  background: rgba(74, 139, 240, 0.07);
+}
+.branch-menu {
+  bottom: 48px;
+  left: 0;
+  width: 300px;
+  max-height: 420px;
+  overflow: auto;
+  z-index: 45;
+}
+.branch-menu .menu-item {
+  gap: 8px;
+  font-size: 13px;
+}
+.branch-kinds {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+.branch-kinds button {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-2);
+  font-size: 12px;
+  color: var(--muted);
+}
+.branch-kinds button.on {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.branch-new {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 8px 6px;
+  padding: 0 4px 0 10px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.branch-new input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}

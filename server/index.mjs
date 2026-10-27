@@ -506,9 +506,45 @@ function changedFiles(out) {
   return files
 }
 
+// What the git panel shows besides the summary: one file's changes, one commit, the local branches.
+async function gitView(cwd, what, q) {
+  if (!isDir(cwd)) throw new Error('not a directory')
+  const git = (...args) => runCommand('git', ['-C', cwd, ...args], { env: CLEAN_ENV, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 })
+  const MAX = 600_000 // a huge diff is cut rather than freezing the panel
+  if (what === 'diff') {
+    const p = String(q.get('path') ?? '')
+    const f = changedFiles((await git('status', '--porcelain', '-z', '--untracked-files=all')).stdout).find((x) => x.path === p)
+    if (!f) throw new Error(`${p.slice(0, 120)} has no changes`)
+    if (f.code === '??') {
+      const file = path.join((await git('rev-parse', '--show-toplevel')).stdout.trim(), f.path)
+      if (fs.statSync(file).size > 512 * 1024) return { path: p, text: '', note: 'This new file is too big to show here' }
+      const body = fs.readFileSync(file)
+      if (body.includes(0)) return { path: p, text: '', note: 'A new binary file' }
+      const lines = body.toString('utf8').split('\n')
+      if (lines.at(-1) === '') lines.pop()
+      return { path: p, text: `@@ -0,0 +1,${lines.length} @@\n${lines.map((l) => `+${l}`).join('\n')}` }
+    }
+    const spec = [`:(top,literal)${f.path}`, ...(f.orig ? [`:(top,literal)${f.orig}`] : [])]
+    const r = await git('diff', 'HEAD', '--no-color', '--no-ext-diff', '-M', '--', ...spec)
+    return { path: p, text: r.stdout.slice(0, MAX), cut: r.stdout.length > MAX }
+  }
+  if (what === 'show') {
+    const hash = String(q.get('hash') ?? '')
+    if (!/^[0-9a-f]{4,40}$/i.test(hash)) throw new Error('not a commit')
+    const r = await git('show', '--no-color', '--no-ext-diff', '-M', '--format=%H%x1f%s%x1f%an%x1f%cr%x1f%b%x1e', hash)
+    if (r.code !== 0) throw new Error(r.stderr.trim().split('\n')[0] || 'no such commit')
+    const cut = r.stdout.indexOf('\x1e')
+    const [full, subject, author, when, body] = r.stdout.slice(0, cut).split('\x1f')
+    const text = r.stdout.slice(cut + 1)
+    return { hash: full, subject, author, when, body: body.trim(), text: text.slice(0, MAX), cut: text.length > MAX }
+  }
+  if (what === 'branches') return { branches: (await git('branch', '--format=%(refname:short)')).stdout.split('\n').filter(Boolean) }
+  throw new Error(`unknown git view ${what}`)
+}
+
 // The git panel's buttons. Arguments go to git directly (no shell), a credential prompt fails
 // instead of hanging, and pull only fast-forwards: a merge with conflicts is not a button's job.
-async function gitAction(cwd, action, message, picked) {
+async function gitAction(cwd, action, message, picked, branch) {
   if (!isDir(cwd)) throw new Error('not a directory')
   const env = { ...CLEAN_ENV, GIT_TERMINAL_PROMPT: '0' }
   const git = (...args) => runCommand('git', ['-C', cwd, ...args], { env, timeout: 60_000 })
@@ -538,6 +574,30 @@ async function gitAction(cwd, action, message, picked) {
     const tracked = (await git('rev-parse', '--abbrev-ref', '@{u}')).code === 0
     check(await (tracked ? git('push') : git('push', '-u', 'origin', 'HEAD')))
   } else if (action === 'pull') check(await git('pull', '--ff-only'))
+  else if (action === 'discard') {
+    // Back to the last commit: tracked files are restored, new ones removed (the panel asks first).
+    if (!paths.length) throw new Error('pick the files to discard')
+    const top = check(await git('rev-parse', '--show-toplevel')).stdout.trim()
+    const changed = new Map(changedFiles((await git('status', '--porcelain', '-z', '--untracked-files=all')).stdout).map((f) => [f.path, f]))
+    for (const p of paths) {
+      const f = changed.get(p)
+      if (!f) continue // a rename's old path, restored together with the new one
+      const spec = [`:(top,literal)${f.path}`, ...(f.orig ? [`:(top,literal)${f.orig}`] : [])]
+      if (f.code === '??') {
+        const file = path.resolve(top, f.path)
+        if (!file.startsWith(top + path.sep)) throw new Error(`${f.path} is outside the repository`)
+        fs.rmSync(file, { force: true })
+      } else if (f.code.includes('A')) check(await git('rm', '-f', '-q', '--', ...spec))
+      else check(await git('restore', '--source=HEAD', '--staged', '--worktree', '--', ...spec))
+    }
+  } else if (action === 'branch') {
+    const name = String(branch?.name ?? '').trim()
+    if (!name || (await git('check-ref-format', '--branch', name)).code !== 0) throw new Error(`${name.slice(0, 80)} is not a valid branch name`)
+    check(await git('switch', ...(branch?.create ? ['-c', name] : [name])))
+  } else if (action === 'init') {
+    if ((await git('rev-parse', '--git-dir')).code === 0) throw new Error('this folder is already a git repository')
+    check(await git('init', '-q'))
+  }
   else if (action === 'message') {
     const only = paths.length ? ['--', ...paths.map((p) => `:(top,literal)${p}`)] : []
     const [stat, diff, untracked] = await Promise.all([git('diff', 'HEAD', '--stat', ...only), git('diff', 'HEAD', ...only), git('ls-files', '--others', '--exclude-standard', ...only)])
@@ -743,9 +803,16 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (route === 'git' && id && req.method === 'POST') {
-      const { cwd, message, files } = JSON.parse(await readBody(req, 256 * 1024))
+      const { cwd, message, files, branch } = JSON.parse(await readBody(req, 256 * 1024))
       try {
-        return json(res, 200, await gitAction(cwd, id, message, files))
+        return json(res, 200, await gitAction(cwd, id, message, files, branch))
+      } catch (e) {
+        return json(res, 400, { error: e.message })
+      }
+    }
+    if (route === 'git' && id) {
+      try {
+        return json(res, 200, await gitView(url.searchParams.get('cwd'), id, url.searchParams))
       } catch (e) {
         return json(res, 400, { error: e.message })
       }

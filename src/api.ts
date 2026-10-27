@@ -70,8 +70,14 @@ export const api = {
   ls: (path?: string) =>
     call<{ path: string; parent: string; home: string; dirs: string[]; isRepo: boolean }>('GET', `/api/ls${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   git: (cwd: string) => call<GitInfo | null>('GET', `/api/git?cwd=${encodeURIComponent(cwd)}`),
-  gitAction: (action: 'commit' | 'push' | 'pull' | 'message', cwd: string, message?: string, files?: string[]) =>
+  gitAction: (action: 'commit' | 'push' | 'pull' | 'message' | 'discard' | 'init', cwd: string, message?: string, files?: string[]) =>
     call<{ ok?: boolean; message?: string }>('POST', `/api/git/${action}`, { cwd, message, files }),
+  gitBranch: (cwd: string, name: string, create: boolean) => call<{ ok: boolean }>('POST', '/api/git/branch', { cwd, branch: { name, create } }),
+  gitDiff: (cwd: string, path: string) =>
+    call<{ path: string; text: string; note?: string; cut?: boolean }>('GET', `/api/git/diff?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(path)}`),
+  gitShow: (cwd: string, hash: string) =>
+    call<{ hash: string; subject: string; author: string; when: string; body: string; text: string; cut?: boolean }>('GET', `/api/git/show?cwd=${encodeURIComponent(cwd)}&hash=${hash}`),
+  gitBranches: (cwd: string) => call<{ branches: string[] }>('GET', `/api/git/branches?cwd=${encodeURIComponent(cwd)}`),
   usage: () => call<Usage>('GET', '/api/usage'),
   limits: (profile?: string, fresh?: boolean) => call<Limits>('GET', `/api/usage/limits?profile=${encodeURIComponent(profile ?? '')}${fresh ? '&fresh=1' : ''}`),
   claudeSession: (sid: string) => call<{ exists: boolean }>('GET', `/api/claude-session/${sid}`),

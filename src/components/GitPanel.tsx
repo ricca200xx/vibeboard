@@ -1,252 +1,513 @@
-import { useEffect, useState } from 'react'
-import { ArrowDown, ArrowUp, ArrowUpRight, Check, CircleArrowUp, CircleCheck, CircleAlert, GitBranch, History, RotateCw, Sparkle, X } from 'lucide-react'
-import { api, type GitInfo } from '../api'
-import { project, useStore } from '../store'
-import { GitHubMark } from './icons'
+import { useEffect, useState } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  CircleArrowUp,
+  CircleCheck,
+  CircleAlert,
+  GitBranch,
+  History,
+  RotateCw,
+  Sparkle,
+  X,
+} from "lucide-react";
+import { api, type GitInfo } from "../api";
+import { project, useStore } from "../store";
+import { GitHubMark } from "./icons";
+import { BranchMenu, GitDrawer, type GitView } from "./GitDiff";
 
 // The remote as a web page: git@github.com:owner/repo.git and https://github.com/owner/repo both work.
 const webOf = (remote: string | null) => {
-  const m = remote?.match(/^(?:[\w+]+:\/\/)?(?:[^@/]+@)?([^:/]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/)
-  return m ? { url: `https://${m[1]}/${m[2]}`, name: m[2], github: m[1] === 'github.com' } : null
-}
+  const m = remote?.match(
+    /^(?:[\w+]+:\/\/)?(?:[^@/]+@)?([^:/]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/,
+  );
+  return m
+    ? {
+        url: `https://${m[1]}/${m[2]}`,
+        name: m[2],
+        github: m[1] === "github.com",
+      }
+    : null;
+};
 // Cut in the middle so the owner's start and the repo name both stay readable.
-const middle = (s: string, max = 26) => (s.length <= max ? s : `${s.slice(0, 10)}…${s.slice(-(max - 11))}`)
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+const middle = (s: string, max = 26) =>
+  s.length <= max ? s : `${s.slice(0, 10)}…${s.slice(-(max - 11))}`;
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 export function GitPill() {
-  const p = useStore(project)!
-  const [git, setGit] = useState<GitInfo | null>(null)
-  const [open, setOpen] = useState(false)
-  const load = () => api.git(p.path).then(setGit).catch(() => setGit(null))
+  const p = useStore(project)!;
+  const [git, setGit] = useState<GitInfo | null | undefined>(undefined); // null: not a repository
+  const [open, setOpen] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const load = () =>
+    api
+      .git(p.path)
+      .then(setGit)
+      .catch(() => setGit(undefined));
   useEffect(() => {
-    load()
-    const t = setInterval(load, 15_000)
-    return () => clearInterval(t)
-  }, [p.path])
-  if (!git) return null
-  const web = webOf(git.remote)
+    load();
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+  }, [p.path]);
+  if (git === undefined) return null;
+  // A folder without git still gets the pill: one click makes it a repository.
+  if (git === null)
+    return (
+      <div style={{ position: "relative" }}>
+        {open && (
+          <div className="menu git-panel git-init nowheel">
+            <div className="git-clean">
+              <GitBranch size={16} color="var(--muted)" />
+              <span>
+                <div>This folder is not a git repository</div>
+                <div className="git-dir">
+                  Start one to save snapshots of the work and see every change.
+                </div>
+              </span>
+            </div>
+            {failed && <div className="git-foot bad">{failed}</div>}
+            <button
+              className="git-commit"
+              onClick={() =>
+                api
+                  .gitAction("init", p.path)
+                  .then(() => (setFailed(null), load()))
+                  .catch((e) => setFailed((e as Error).message))
+              }
+            >
+              <GitBranch size={15} /> Initialize git
+            </button>
+          </div>
+        )}
+        <button
+          className="pill git-pill muted"
+          onClick={() => setOpen((v) => !v)}
+        >
+          <GitBranch size={15} /> No git
+        </button>
+      </div>
+    );
+  const web = webOf(git.remote);
   return (
-    <div style={{ position: 'relative' }}>
-      {open && <GitPanel git={git} cwd={p.path} name={web?.name ?? p.name} web={web?.url} reload={load} onClose={() => setOpen(false)} />}
+    <div style={{ position: "relative" }}>
+      {open && (
+        <GitPanel
+          git={git}
+          cwd={p.path}
+          name={web?.name ?? p.name}
+          web={web?.url}
+          reload={load}
+          onClose={() => setOpen(false)}
+        />
+      )}
       <button className="pill git-pill" onClick={() => setOpen((v) => !v)}>
-        {web?.github ? <GitHubMark size={16} /> : <GitBranch size={15} />} {git.branch} {git.changes > 0 && <span className="n">{git.changes}</span>}
+        {web?.github ? <GitHubMark size={16} /> : <GitBranch size={15} />}{" "}
+        {git.branch}{" "}
+        {git.changes > 0 && <span className="n">{git.changes}</span>}
       </button>
     </div>
-  )
+  );
 }
 
 // Commit and push in one go, without a terminal: tick the files, keep or write the message.
-function GitPanel({ git, cwd, name, web, reload, onClose }: { git: GitInfo; cwd: string; name: string; web?: string; reload: () => void; onClose: () => void }) {
-  const [history, setHistory] = useState(false)
-  const [skip, setSkip] = useState<Set<string>>(new Set()) // files left out of the next commit
-  const [message, setMessage] = useState('')
-  const [busy, setBusy] = useState<null | 'commit' | 'push' | 'pull' | 'message'>(null)
-  const [done, setDone] = useState<{ ok: boolean; text: string } | null>(null)
+function GitPanel({
+  git,
+  cwd,
+  name,
+  web,
+  reload,
+  onClose,
+}: {
+  git: GitInfo;
+  cwd: string;
+  name: string;
+  web?: string;
+  reload: () => void;
+  onClose: () => void;
+}) {
+  const [history, setHistory] = useState(false);
+  const [skip, setSkip] = useState<Set<string>>(new Set()); // files left out of the next commit
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState<
+    null | "commit" | "push" | "pull" | "message"
+  >(null);
+  const [done, setDone] = useState<{ ok: boolean; text: string } | null>(null);
+  const [view, setView] = useState<GitView | null>(null);
+  const [branches, setBranches] = useState(false);
 
-  const picked = git.files.filter((f) => !skip.has(f.path))
-  const add = picked.reduce((n, f) => n + f.add, 0)
-  const del = picked.reduce((n, f) => n + f.del, 0)
+  const picked = git.files.filter((f) => !skip.has(f.path));
+  const add = picked.reduce((n, f) => n + f.add, 0);
+  const del = picked.reduce((n, f) => n + f.del, 0);
   // Nothing unticked: commit everything, including files past the listed 200.
-  const files = skip.size ? picked.map((f) => f.path) : undefined
-  const count = files?.length ?? git.changes
-  const placeholder = `Update ${plural(count, 'file')}`
-  const sync = !git.remote ? 'local only' : !git.upstream ? 'not published' : git.ahead || git.behind ? [git.ahead && `${git.ahead} ahead`, git.behind && `${git.behind} behind`].filter(Boolean).join(' · ') : 'synced'
+  const files = skip.size ? picked.map((f) => f.path) : undefined;
+  const count = files?.length ?? git.changes;
+  const placeholder = `Update ${plural(count, "file")}`;
+  const sync = !git.remote
+    ? "local only"
+    : !git.upstream
+      ? "not published"
+      : git.ahead || git.behind
+        ? [
+            git.ahead && `${git.ahead} ahead`,
+            git.behind && `${git.behind} behind`,
+          ]
+            .filter(Boolean)
+            .join(" · ")
+        : "synced";
 
-  const act = async (action: 'push' | 'pull', ok: string) => {
-    setBusy(action)
-    setDone(null)
+  const act = async (action: "push" | "pull", ok: string) => {
+    setBusy(action);
+    setDone(null);
     try {
-      await api.gitAction(action, cwd)
-      setDone({ ok: true, text: ok })
+      await api.gitAction(action, cwd);
+      setDone({ ok: true, text: ok });
     } catch (e) {
-      setDone({ ok: false, text: (e as Error).message })
+      setDone({ ok: false, text: (e as Error).message });
     } finally {
-      setBusy(null)
-      reload()
+      setBusy(null);
+      reload();
     }
-  }
+  };
   const write = async () => {
-    setBusy('message')
+    setBusy("message");
     try {
-      setMessage((await api.gitAction('message', cwd, undefined, files)).message ?? '')
+      setMessage(
+        (await api.gitAction("message", cwd, undefined, files)).message ?? "",
+      );
     } catch (e) {
-      setDone({ ok: false, text: (e as Error).message })
+      setDone({ ok: false, text: (e as Error).message });
     } finally {
-      setBusy(null)
+      setBusy(null);
     }
-  }
+  };
   const commit = async () => {
-    if (!count || busy) return
-    setBusy('commit')
-    setDone(null)
+    if (!count || busy) return;
+    setBusy("commit");
+    setDone(null);
     try {
-      await api.gitAction('commit', cwd, message.trim() || placeholder, files)
-      setMessage('')
-      setSkip(new Set())
-      let text = `Committed ${plural(count, 'file')}`
+      await api.gitAction("commit", cwd, message.trim() || placeholder, files);
+      setMessage("");
+      setSkip(new Set());
+      let text = `Committed ${plural(count, "file")}`;
       if (git.remote) {
-        setBusy('push')
+        setBusy("push");
         try {
-          await api.gitAction('push', cwd)
-          text += ' · pushed'
+          await api.gitAction("push", cwd);
+          text += " · pushed";
         } catch (e) {
-          text += ` · push failed: ${(e as Error).message}`
-          return setDone({ ok: false, text })
+          text += ` · push failed: ${(e as Error).message}`;
+          return setDone({ ok: false, text });
         }
       }
-      setDone({ ok: true, text })
+      setDone({ ok: true, text });
     } catch (e) {
-      setDone({ ok: false, text: (e as Error).message })
+      setDone({ ok: false, text: (e as Error).message });
     } finally {
-      setBusy(null)
-      reload()
+      setBusy(null);
+      reload();
     }
-  }
+  };
   const toggle = (p: string) =>
     setSkip((cur) => {
-      const next = new Set(cur)
-      if (!next.delete(p)) next.add(p)
-      return next
-    })
+      const next = new Set(cur);
+      if (!next.delete(p)) next.add(p);
+      return next;
+    });
 
   return (
-    <div className="menu git-panel nowheel">
-      <div className="git-head">
-        <span className="gh-box">{web?.includes('github.com') ? <GitHubMark size={20} /> : <GitBranch size={18} />}</span>
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <div className="t">{middle(name)}</div>
-          <div className="s">
-            <GitBranch size={11} /> <span className="mono">{git.branch}</span> <span className="faint">{sync}</span>
-          </div>
-        </span>
-        <button className={`round-btn sm ${history ? 'on' : ''}`} title="History" onClick={() => setHistory((v) => !v)}>
-          <History size={15} />
-        </button>
-        {web && (
-          <a className="round-btn sm" title="Open on the web" href={web} target="_blank" rel="noreferrer">
-            <ArrowUpRight size={15} />
-          </a>
-        )}
-        <button className="round-btn sm" title="Refresh" onClick={reload}>
-          <RotateCw size={14} />
-        </button>
-        <button className="round-btn sm" title="Close" onClick={onClose}>
-          <X size={15} />
-        </button>
-      </div>
-
-      {history ? (
-        <div className="git-scroll">
-          <div className="git-sec">
-            History <span className="n">{git.commits.length}</span>
-          </div>
-          {git.commits.map((c) => (
-            <div className="commit" key={c.hash}>
-              <span className="bullet" />
-              <span className="subject">{c.subject}</span>
-              <span className="when">{c.when}</span>
-              <span className="meta">
-                <span className="hash">{c.hash}</span> {c.author}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <>
-          <div className="git-sec">
-            Changes
-            {git.changes > 0 && (
-              <>
-                <span className="n">
-                  {picked.length}/{git.files.length}
-                </span>
-                {(add > 0 || del > 0) && (
-                  <span className="n">
-                    <span className="plus">+{add}</span> <span className="minus">-{del}</span>
-                  </span>
-                )}
-                <span className="spacer" />
-                <button className="link" onClick={() => setSkip(skip.size ? new Set() : new Set(git.files.map((f) => f.path)))}>
-                  {skip.size ? 'All' : 'None'}
-                </button>
-              </>
+    <>
+      {view && (
+        <GitDrawer
+          cwd={cwd}
+          view={view}
+          onClose={() => setView(null)}
+          onChanged={reload}
+        />
+      )}
+      {branches && (
+        <BranchMenu
+          cwd={cwd}
+          current={git.branch}
+          onClose={() => setBranches(false)}
+          onDone={(text, ok) => {
+            setBranches(false);
+            setDone({ ok, text });
+            reload();
+          }}
+        />
+      )}
+      <div className="menu git-panel nowheel">
+        <div className="git-head">
+          <span className="gh-box">
+            {web?.includes("github.com") ? (
+              <GitHubMark size={20} />
+            ) : (
+              <GitBranch size={18} />
             )}
-          </div>
-          {git.changes ? (
-            <div className="git-scroll git-files">
-              {git.files.map((f) => {
-                const slash = f.path.lastIndexOf('/')
-                const code = f.code === '??' ? 'U' : f.code[0]
-                return (
-                  <button key={f.path} className="git-file" title={f.orig ? `${f.orig} → ${f.path}` : f.path} onClick={() => toggle(f.path)}>
-                    <span className={`git-check ${skip.has(f.path) ? '' : 'on'}`}>{!skip.has(f.path) && <Check size={11} strokeWidth={3.5} />}</span>
-                    <span className={`git-code c-${code}`}>{code}</span>
-                    <span style={{ minWidth: 0, flex: 1 }}>
-                      <div className="git-name">{f.path.slice(slash + 1)}</div>
-                      {slash > 0 && <div className="git-dir">{f.path.slice(0, slash)}</div>}
-                    </span>
-                  </button>
-                )
-              })}
-              {git.changes > git.files.length && <div className="git-dir" style={{ padding: '4px 0 0 52px' }}>and {git.changes - git.files.length} more, committed with the rest</div>}
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <div className="t">{middle(name)}</div>
+            <div className="s">
+              <button
+                className="gh-branch"
+                title="Switch or start a branch"
+                onClick={() => setBranches((v) => !v)}
+              >
+                <GitBranch size={11} />{" "}
+                <span className="mono">{git.branch}</span>{" "}
+                <ChevronDown size={11} />
+              </button>{" "}
+              <span className="faint">{sync}</span>
             </div>
-          ) : (
-            <div className="git-clean">
-              <CircleCheck size={16} color="var(--done)" />
-              <span>
-                <div>Working tree clean</div>
-                <div className="git-dir">Nothing to commit.</div>
-              </span>
-            </div>
+          </span>
+          <button
+            className={`round-btn sm ${history ? "on" : ""}`}
+            title="History"
+            onClick={() => setHistory((v) => !v)}
+          >
+            <History size={15} />
+          </button>
+          {web && (
+            <a
+              className="round-btn sm"
+              title="Open on the web"
+              href={web}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ArrowUpRight size={15} />
+            </a>
           )}
-          {git.changes > 0 && (
-            <div className="git-compose">
-              <div className="git-msg">
-                <input placeholder={placeholder} value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && commit()} />
-                <button title="Write the message from the changes" disabled={!!busy || !count} onClick={write}>
-                  <Sparkle size={15} className={busy === 'message' ? 'spin' : ''} />
+          <button className="round-btn sm" title="Refresh" onClick={reload}>
+            <RotateCw size={14} />
+          </button>
+          <button className="round-btn sm" title="Close" onClick={onClose}>
+            <X size={15} />
+          </button>
+        </div>
+
+        {history ? (
+          <div className="git-scroll">
+            <div className="git-sec">
+              History <span className="n">{git.commits.length}</span>
+            </div>
+            {git.commits.map((c) => (
+              <button
+                className="commit"
+                key={c.hash}
+                onClick={() => setView({ kind: "commit", hash: c.hash })}
+              >
+                <span className="bullet" />
+                <span className="subject">{c.subject}</span>
+                <span className="when">{c.when}</span>
+                <span className="meta">
+                  <span className="hash">{c.hash}</span> {c.author}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <>
+            <div className="git-sec">
+              Changes
+              {git.changes > 0 && (
+                <>
+                  <span className="n">
+                    {picked.length}/{git.files.length}
+                  </span>
+                  {(add > 0 || del > 0) && (
+                    <span className="n">
+                      <span className="plus">+{add}</span>{" "}
+                      <span className="minus">-{del}</span>
+                    </span>
+                  )}
+                  <span className="spacer" />
+                  <button
+                    className="link"
+                    onClick={() =>
+                      setSkip(
+                        skip.size
+                          ? new Set()
+                          : new Set(git.files.map((f) => f.path)),
+                      )
+                    }
+                  >
+                    {skip.size ? "All" : "None"}
+                  </button>
+                </>
+              )}
+            </div>
+            {git.changes ? (
+              <div className="git-scroll git-files">
+                {git.files.map((f) => {
+                  const slash = f.path.lastIndexOf("/");
+                  const code = f.code === "??" ? "U" : f.code[0];
+                  return (
+                    <div
+                      key={f.path}
+                      className={`git-file ${view?.kind === "file" && view.path === f.path ? "open" : ""}`}
+                      title={f.orig ? `${f.orig} → ${f.path}` : f.path}
+                    >
+                      <button
+                        className={`git-check ${skip.has(f.path) ? "" : "on"}`}
+                        title={
+                          skip.has(f.path)
+                            ? "Include in the commit"
+                            : "Leave out of the commit"
+                        }
+                        onClick={() => toggle(f.path)}
+                      >
+                        {!skip.has(f.path) && (
+                          <Check size={11} strokeWidth={3.5} />
+                        )}
+                      </button>
+                      <button
+                        className="git-open"
+                        title="See what changed"
+                        onClick={() => setView({ kind: "file", path: f.path })}
+                      >
+                        <span className={`git-code c-${code}`}>{code}</span>
+                        <span style={{ minWidth: 0, flex: 1 }}>
+                          <div className="git-name">
+                            {f.path.slice(slash + 1)}
+                          </div>
+                          {slash > 0 && (
+                            <div className="git-dir">
+                              {f.path.slice(0, slash)}
+                            </div>
+                          )}
+                        </span>
+                        <span className="git-lines">
+                          {f.add > 0 && <span className="plus">+{f.add}</span>}{" "}
+                          {f.del > 0 && <span className="minus">-{f.del}</span>}
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })}
+                {git.changes > git.files.length && (
+                  <div className="git-dir" style={{ padding: "4px 0 0 52px" }}>
+                    and {git.changes - git.files.length} more, committed with
+                    the rest
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="git-clean">
+                <CircleCheck size={16} color="var(--done)" />
+                <span>
+                  <div>Working tree clean</div>
+                  <div className="git-dir">Nothing to commit.</div>
+                </span>
+              </div>
+            )}
+            {git.changes > 0 && (
+              <div className="git-compose">
+                <div className="git-msg">
+                  <input
+                    placeholder={placeholder}
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && commit()}
+                  />
+                  <button
+                    title="Write the message from the changes"
+                    disabled={!!busy || !count}
+                    onClick={write}
+                  >
+                    <Sparkle
+                      size={15}
+                      className={busy === "message" ? "spin" : ""}
+                    />
+                  </button>
+                </div>
+                <button
+                  className="git-commit"
+                  disabled={!!busy || !count}
+                  onClick={commit}
+                >
+                  {busy === "commit" || busy === "push" ? (
+                    <RotateCw size={15} className="spin" />
+                  ) : (
+                    <CircleArrowUp
+                      size={17}
+                      fill="#fff"
+                      color="var(--accent)"
+                    />
+                  )}
+                  {busy === "commit"
+                    ? "Committing…"
+                    : busy === "push"
+                      ? "Pushing…"
+                      : `${git.remote ? "Commit & Push" : "Commit"} ${plural(count, "file")}`}
                 </button>
               </div>
-              <button className="git-commit" disabled={!!busy || !count} onClick={commit}>
-                {busy === 'commit' || busy === 'push' ? <RotateCw size={15} className="spin" /> : <CircleArrowUp size={17} fill="#fff" color="var(--accent)" />}
-                {busy === 'commit' ? 'Committing…' : busy === 'push' ? 'Pushing…' : `${git.remote ? 'Commit & Push' : 'Commit'} ${plural(count, 'file')}`}
-              </button>
-            </div>
-          )}
-          {git.remote && (git.behind > 0 || (git.changes === 0 && (git.ahead > 0 || (!git.upstream && git.commits.length > 0)))) && (
-            <div className="git-syncrow">
-              {git.behind > 0 && (
-                <button className="btn" disabled={!!busy} onClick={() => act('pull', 'Up to date')} title="Get the latest from the remote (only when it does not need a merge)">
-                  <ArrowDown size={14} /> {busy === 'pull' ? 'Pulling…' : `Pull ${git.behind}`}
-                </button>
-              )}
-              {git.changes === 0 && (git.ahead > 0 || !git.upstream) && (
-                <button className="btn" disabled={!!busy} onClick={() => act('push', 'Pushed')}>
-                  <ArrowUp size={14} /> {busy === 'push' ? 'Pushing…' : git.upstream ? `Push ${git.ahead}` : 'Publish branch'}
-                </button>
-              )}
-            </div>
-          )}
-          {git.commits.length > 0 && (
-            <>
-              <div className="git-sec">Recent</div>
-              {git.commits.slice(0, 3).map((c) => (
-                <div className="git-recent" key={c.hash}>
-                  <span className="bullet" />
-                  <span className="subject">{c.subject}</span>
-                  <span className="when">{c.when}</span>
+            )}
+            {git.remote &&
+              (git.behind > 0 ||
+                (git.changes === 0 &&
+                  (git.ahead > 0 ||
+                    (!git.upstream && git.commits.length > 0)))) && (
+                <div className="git-syncrow">
+                  {git.behind > 0 && (
+                    <button
+                      className="btn"
+                      disabled={!!busy}
+                      onClick={() => act("pull", "Up to date")}
+                      title="Get the latest from the remote (only when it does not need a merge)"
+                    >
+                      <ArrowDown size={14} />{" "}
+                      {busy === "pull" ? "Pulling…" : `Pull ${git.behind}`}
+                    </button>
+                  )}
+                  {git.changes === 0 && (git.ahead > 0 || !git.upstream) && (
+                    <button
+                      className="btn"
+                      disabled={!!busy}
+                      onClick={() => act("push", "Pushed")}
+                    >
+                      <ArrowUp size={14} />{" "}
+                      {busy === "push"
+                        ? "Pushing…"
+                        : git.upstream
+                          ? `Push ${git.ahead}`
+                          : "Publish branch"}
+                    </button>
+                  )}
                 </div>
-              ))}
-            </>
-          )}
-        </>
-      )}
-      {done && (
-        <div className={`git-foot ${done.ok ? '' : 'bad'}`}>
-          {done.ok ? <CircleCheck size={15} color="var(--done)" /> : <CircleAlert size={15} color="var(--accent)" />}
-          <span>{done.text}</span>
-        </div>
-      )}
-    </div>
-  )
+              )}
+            {git.commits.length > 0 && (
+              <>
+                <div className="git-sec">Recent</div>
+                {git.commits.slice(0, 3).map((c) => (
+                  <button
+                    className="git-recent"
+                    key={c.hash}
+                    onClick={() => setView({ kind: "commit", hash: c.hash })}
+                  >
+                    <span className="bullet" />
+                    <span className="subject">{c.subject}</span>
+                    <span className="when">{c.when}</span>
+                  </button>
+                ))}
+              </>
+            )}
+          </>
+        )}
+        {done && (
+          <div className={`git-foot ${done.ok ? "" : "bad"}`}>
+            {done.ok ? (
+              <CircleCheck size={15} color="var(--done)" />
+            ) : (
+              <CircleAlert size={15} color="var(--accent)" />
+            )}
+            <span>{done.text}</span>
+          </div>
+        )}
+      </div>
+    </>
+  );
 }
