@@ -845,6 +845,7 @@ const server = http.createServer(async (req, res) => {
         if (!isDir(root)) throw new Error('not a directory')
         if (id === 'tree') return json(res, 200, files.tree(root, url.searchParams.get('only') === 'md' ? /\.(md|mdx|markdown)$/i : undefined))
         if (id === 'read') return json(res, 200, files.read(root, url.searchParams.get('path')))
+        if (id === 'links') return json(res, 200, files.links(root))
         throw new Error('unknown files call')
       } catch (e) {
         return json(res, 400, { error: e.message })

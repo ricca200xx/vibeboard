@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
 import { ArrowUp, Braces, Code, Copy, Database, FileDown, FileText, Footprints, Layers, LoaderCircle, MessageSquareText, PanelTop, Rabbit, RotateCcw, Scale, ShieldCheck, Square, TextAlignStart, Turtle, X } from 'lucide-react'
 import { api, type DocEntry, type DocJob, type Depth } from '../api'
-import { nid } from '../board'
+import { insertCard } from '../board'
 import { project, useStore } from '../store'
 import { agentById } from '../../shared/agents.js'
 import { TEMPLATES, countWords, readMinutes } from '../../shared/docs.js'
@@ -89,8 +89,7 @@ export function DocumentsStudio() {
   }
   const regenerate = (d: DocEntry) => start(d.template === 'ask' ? { template: 'ask', ask: d.ask ?? d.title } : { template: d.template })
   const place = (d: DocEntry) => {
-    const c = s.viewCenter()
-    s.addNode({ id: nid('doc'), type: 'document', position: { x: c.x - 260, y: c.y - 340 }, style: { width: 520, height: 680 }, data: { cwd: p.path, id: d.id } })
+    insertCard('document', 520, 680, { cwd: p.path, id: d.id })
     close()
   }
   const copy = (text: string) => navigator.clipboard.writeText(text).then(() => s.notify('Markdown copied'))

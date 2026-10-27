@@ -107,6 +107,7 @@ type S = {
   shapeKind: ShapeKind
   connecting: string | null // the orchestrator whose Connect mode is on
   modal: Modal
+  studioPath: string | null // the note the Markdown studio opens on
   toast: string | null
   settings: Settings
   presets: Preset[]
@@ -132,6 +133,7 @@ type S = {
   onEdgesChange: (changes: EdgeChange[]) => void
   setViewport: (vp: Viewport) => void
   addNode: (node: Node) => void
+  reveal: (id: string) => void
   duplicateNode: (id: string) => void
   reorderNode: (id: string, to: 'front' | 'back') => void
   updateData: (id: string, patch: Record<string, unknown>) => void
@@ -359,6 +361,7 @@ export const useStore = create<S>((set, get) => {
     shapeKind: 'rect',
     connecting: null,
     modal: null,
+    studioPath: null,
     toast: null,
     settings: { yolo: false, fontSize: 13, defaultAgent: 'claude' },
     presets: DEFAULT_PRESETS,
@@ -503,6 +506,19 @@ export const useStore = create<S>((set, get) => {
     onEdgesChange: (changes) => updateWs((w) => ({ ...w, edges: applyEdgeChanges(changes, w.edges) })),
     setViewport: (viewport) => updateWs((w) => ({ ...w, viewport })),
     addNode: (node) => updateWs((w) => ({ ...w, nodes: [...w.nodes.map((n) => ({ ...n, selected: false })), { ...node, selected: true }] })),
+    // Auto-placement may land off screen: pan (same zoom) so the new node is in view.
+    reveal: (id) =>
+      setTimeout(() => {
+        const flow = get().flow
+        const n = flow?.getInternalNode(id)
+        if (!flow || !n) return
+        const { x, y } = n.internals.positionAbsolute
+        const w = n.measured.width ?? CONSOLE_SIZE.width
+        const h = n.measured.height ?? CONSOLE_SIZE.height
+        const tl = flow.flowToScreenPosition({ x, y })
+        const br = flow.flowToScreenPosition({ x: x + w, y: y + h })
+        if (tl.x < 0 || tl.y < 0 || br.x > innerWidth || br.y > innerHeight) flow.setCenter(x + w / 2, y + h / 2, { zoom: flow.getZoom(), duration: 350 })
+      }, 60),
     duplicateNode: (id) => {
       const n = workspace(get())?.nodes.find((x) => x.id === id)
       if (!n || n.type === 'console' || n.type === 'group') return
@@ -564,17 +580,7 @@ export const useStore = create<S>((set, get) => {
       get().addNode(node)
       // The first console is the natural moment to ask: from here on there is something to be told about.
       if (get().settings.notify !== false) askNotifyPermission()
-      // Auto-placement may land off screen: pan (same zoom) so the new console is in view.
-      if (reveal) setTimeout(() => {
-        const flow = get().flow
-        const n = flow?.getInternalNode(id)
-        if (!flow || !n) return
-        const { x, y } = n.internals.positionAbsolute
-        const tl = flow.flowToScreenPosition({ x, y })
-        const br = flow.flowToScreenPosition({ x: x + CONSOLE_SIZE.width, y: y + CONSOLE_SIZE.height })
-        if (tl.x < 0 || tl.y < 0 || br.x > innerWidth || br.y > innerHeight)
-          flow.setCenter(x + CONSOLE_SIZE.width / 2, y + CONSOLE_SIZE.height / 2, { zoom: flow.getZoom(), duration: 350 })
-      }, 60)
+      if (reveal) get().reveal(id)
       return id
     },
 

@@ -2,7 +2,7 @@ import { memo, useEffect, useState } from 'react'
 import { NodeResizer, type Node, type NodeProps } from '@xyflow/react'
 import { ChevronDown, ChevronRight, CodeXml, File, FileJson, FileText, Folder, FolderOpen, FolderPlus, Image, PanelTop, Plus, RotateCw, Save, X } from 'lucide-react'
 import { api, type FileEntry } from '../api'
-import { nid } from '../board'
+import { insertCard } from '../board'
 import { project, useStore } from '../store'
 import { CodeView, langLabel } from './CodeView'
 
@@ -20,8 +20,9 @@ export function FileIcon({ name }: { name: string }) {
 }
 
 // A folder tree; folders open and close, a file is picked with a click.
-export function FileTree({ entries, current, onOpen, label = (e: FileEntry) => e.name, depth = 0 }: { entries: FileEntry[]; current?: string; onOpen: (path: string) => void; label?: (e: FileEntry) => string; depth?: number }) {
-  const [open, setOpen] = useState<Set<string>>(new Set())
+// `expanded`: every folder starts open.
+export function FileTree({ entries, current, onOpen, label = (e: FileEntry) => e.name, depth = 0, expanded = false }: { entries: FileEntry[]; current?: string; onOpen: (path: string) => void; label?: (e: FileEntry) => string; depth?: number; expanded?: boolean }) {
+  const [open, setOpen] = useState<Set<string>>(() => new Set(expanded ? entries.filter((e) => e.dir).map((e) => e.path) : []))
   return (
     <>
       {entries.map((e) =>
@@ -32,7 +33,7 @@ export function FileTree({ entries, current, onOpen, label = (e: FileEntry) => e
               {open.has(e.path) ? <FolderOpen size={14} color="var(--accent)" /> : <Folder size={14} color="var(--accent)" />}
               <span>{label(e)}</span>
             </button>
-            {open.has(e.path) && <FileTree entries={e.children ?? []} current={current} onOpen={onOpen} label={label} depth={depth + 1} />}
+            {open.has(e.path) && <FileTree entries={e.children ?? []} current={current} onOpen={onOpen} label={label} depth={depth + 1} expanded={expanded} />}
           </div>
         ) : (
           <button key={e.path} className={`ft-row ${current === e.path ? 'on' : ''}`} style={{ paddingLeft: 22 + depth * 14 }} onClick={() => onOpen(e.path)}>
@@ -90,9 +91,7 @@ export function CodeStudio() {
   }
   const insert = () => {
     if (!file) return
-    const s = useStore.getState()
-    const c = s.viewCenter()
-    s.addNode({ id: nid('code'), type: 'code', position: { x: c.x - 320, y: c.y - 260 }, style: { width: 640, height: 520 }, data: { root: file.root, path: file.path } })
+    insertCard('code', 640, 520, { root: file.root, path: file.path })
     close()
   }
   const edited = !!file && file.text !== file.saved
@@ -223,7 +222,7 @@ export function CodeStudio() {
   )
 }
 
-function PathInput({ placeholder, onSubmit, onCancel }: { placeholder: string; onSubmit: (v: string) => void; onCancel: () => void }) {
+export function PathInput({ placeholder, onSubmit, onCancel }: { placeholder: string; onSubmit: (v: string) => void; onCancel: () => void }) {
   const [v, setV] = useState('')
   return (
     <form

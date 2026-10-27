@@ -11,6 +11,7 @@ export function insertCard(type: string, width: number, height: number, data: Re
   const c = at ?? s.viewCenter()
   const id = nid(type[0])
   s.addNode({ id, type, position: { x: c.x - width / 2, y: c.y - height / 2 }, style: { width, height }, data })
+  s.reveal(id)
   return id
 }
 

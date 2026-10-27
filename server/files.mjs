@@ -3,6 +3,7 @@
 // "../" nor a link pointing elsewhere can reach outside the project.
 import fs from 'node:fs'
 import path from 'node:path'
+import { noteLinks } from '../shared/notes.js'
 
 const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.turbo', '.cache', 'coverage', '.venv', '__pycache__', '.DS_Store'])
 const MAX_ENTRIES = 5000
@@ -70,4 +71,23 @@ export function write(root, rel, text, create = false) {
   } else if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error('no such file')
   fs.writeFileSync(file, text)
   return { path: rel, size: Buffer.byteLength(text) }
+}
+
+// Every note and the notes it links to, for the Markdown studio's link graph.
+// ponytail: reads every note on each call; cache by mtime if a repo brings thousands of notes.
+export function links(root) {
+  const notes = []
+  const walk = (entries) => entries.forEach((e) => (e.dir ? walk(e.children) : notes.push(e.path)))
+  walk(tree(root, /\.(md|mdx|markdown)$/i).entries)
+  const edges = []
+  for (const from of notes) {
+    let text
+    try {
+      text = read(root, from).text
+    } catch {
+      continue // too big or unreadable: it stays a note without links
+    }
+    for (const to of noteLinks(from, text, notes)) edges.push([from, to])
+  }
+  return { notes, links: edges }
 }

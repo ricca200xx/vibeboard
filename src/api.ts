@@ -106,6 +106,7 @@ export const api = {
   ports: () => call<{ port: number; live: boolean }[]>('GET', '/api/ports'),
   tree: (root: string, only?: 'md') => call<{ entries: FileEntry[]; truncated: boolean }>('GET', `/api/files/tree?root=${encodeURIComponent(root)}${only ? '&only=md' : ''}`),
   readFile: (root: string, path: string) => call<{ path: string; text: string; size: number }>('GET', `/api/files/read?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`),
+  noteLinks: (root: string) => call<{ notes: string[]; links: [string, string][] }>('GET', `/api/files/links?root=${encodeURIComponent(root)}`),
   writeFile: (root: string, path: string, text: string, create = false) => call<{ path: string; size: number }>('POST', '/api/files/write', { root, path, text, create }),
   pageTitle: (url: string) => call<{ title: string }>('GET', `/api/page-title?url=${encodeURIComponent(url)}`),
 }

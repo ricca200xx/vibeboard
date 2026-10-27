@@ -12,6 +12,7 @@ import {
   Copy,
   Eraser,
   FileText,
+  FileType,
   Folder,
   Globe,
   Image,
@@ -44,6 +45,7 @@ import { CommandEdge, HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
 import { OrchestratorNode } from './Orchestrator'
 import { CodeNode, CodeStudio } from './CodeStudio'
 import { DocumentNode, DocumentsStudio } from './DocumentsStudio'
+import { MarkdownNode, MarkdownStudio } from './MarkdownStudio'
 import { ContextMenu, type MenuAt } from './ContextMenu'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
@@ -76,6 +78,7 @@ const nodeTypes = {
   orchestrator: OrchestratorNode,
   code: CodeNode,
   document: DocumentNode,
+  markdown: MarkdownNode,
 }
 
 const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge, command: CommandEdge }
@@ -115,6 +118,7 @@ export function BoardScreen() {
         {modal === 'usage' && <UsagePanel />}
         {modal === 'code' && <CodeStudio />}
         {modal === 'documents' && <DocumentsStudio />}
+        {modal === 'markdown' && <MarkdownStudio />}
       </div>
     </ReactFlowProvider>
   )
@@ -447,6 +451,7 @@ function RightToolbar() {
     { icon: <Orbit size={18} />, tip: 'Orchestrator', run: () => addOrchestrator() },
     { icon: <Folder size={18} />, tip: 'Code', run: () => s.set({ modal: 'code' }) },
     { icon: <FileText size={18} />, tip: 'Documents', run: () => s.set({ modal: 'documents' }) },
+    { icon: <FileType size={18} />, tip: 'Markdown', run: () => s.set({ modal: 'markdown' }) },
     { icon: <Repeat size={18} />, tip: 'Loops', run: () => s.set({ modal: 'loops' }) },
   ]
   return (

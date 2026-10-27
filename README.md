@@ -35,6 +35,7 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
 - **Studios.** *Code*: browse and edit the repo, put a file on the board as a card. *Documents*: your
   CLI reads the repo (read-only) and writes an overview, onboarding guide, architecture, README, API
   reference, data model or security overview, live on a page you can place on the board or export as PDF.
+  *Markdown*: every note in the repo, read, edited or seen as a graph of the links between notes.
 - **Mission map, notes, sketches, web tiles, kanban, usage stats** and multiple workspaces per project.
 
 ## Requirements
