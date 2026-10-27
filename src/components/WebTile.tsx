@@ -6,7 +6,45 @@ import { useStore, type WebData, type WebTab } from '../store'
 import { toUrl } from '../../shared/url.js'
 
 const uid = () => crypto.randomUUID().slice(0, 8)
-const VIEWPORTS = ['Fit', '1280 × 800', '1440 × 900', '1920 × 1080', '390 × 844']
+// Page sizes: the page is laid out at that size and scaled down to the tile.
+const VIEWPORTS: [string, string][] = [
+  ['Fit', 'Fit the tile'],
+  ['1920 × 1080', 'Desktop'],
+  ['1440 × 900', 'Laptop'],
+  ['1280 × 800', 'Small laptop'],
+  ['768 × 1024', 'Tablet'],
+  ['390 × 844', 'Phone'],
+]
+
+function SizeMenu({ current, onPick, onClose }: { current: string; onPick: (v: string) => void; onClose: () => void }) {
+  const [w, h] = current === 'Fit' ? ['', ''] : current.split(' × ')
+  const [width, setWidth] = useState(w)
+  const [height, setHeight] = useState(h)
+  const ok = (v: string) => Number(v) >= 200 && Number(v) <= 5000
+  return (
+    <div className="menu size-menu nowheel" onMouseLeave={onClose}>
+      {VIEWPORTS.map(([v, label]) => (
+        <button key={v} className={`menu-item ${current === v ? 'on' : ''}`} onClick={() => onPick(v)}>
+          <span>{label}</span>
+          <span className="mono">{v === 'Fit' ? '' : v}</span>
+        </button>
+      ))}
+      <form
+        className="size-custom"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (ok(width) && ok(height)) onPick(`${Math.round(Number(width))} × ${Math.round(Number(height))}`)
+        }}
+      >
+        <input type="number" min={200} max={5000} placeholder="width" value={width} onChange={(e) => setWidth(e.target.value)} />×
+        <input type="number" min={200} max={5000} placeholder="height" value={height} onChange={(e) => setHeight(e.target.value)} />
+        <button className="btn sm" disabled={!ok(width) || !ok(height)}>
+          Set
+        </button>
+      </form>
+    </div>
+  )
+}
 const QUICK = [
   ['Google', 'https://www.google.com'],
   ['GitHub', 'https://github.com'],
@@ -55,6 +93,7 @@ function WebTileImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
   const setTab = (tab: WebTab) => save({ tabs: tabs.map((t) => (t.id === tab.id ? tab : t)) })
   const [address, setAddress] = useState(active.url)
   const [nonce, setNonce] = useState(0)
+  const [sizes, setSizes] = useState(false)
   useEffect(() => setAddress(active.url), [active.id, active.url])
   const title = useTitle(active.url)
 
@@ -108,9 +147,12 @@ function WebTileImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
             onKeyDown={(e) => e.key === 'Enter' && go(toUrl(address))}
             onFocus={(e) => e.target.select()}
           />
-          <button className="vp-chip" title="Page size: the page is laid out at this size and scaled to the tile" onClick={() => save({ viewport: VIEWPORTS[(VIEWPORTS.indexOf(viewport) + 1) % VIEWPORTS.length] })}>
-            {viewport}
-          </button>
+          <span style={{ position: 'relative' }}>
+            <button className="vp-chip" title="Page size: the page is laid out at this size and scaled to the tile" onClick={() => setSizes((v) => !v)}>
+              {viewport}
+            </button>
+            {sizes && <SizeMenu current={viewport} onPick={(v) => (save({ viewport: v }), setSizes(false))} onClose={() => setSizes(false)} />}
+          </span>
           {active.url && (
             <a className="icon-btn sm" title="Open in your browser" href={active.url} target="_blank" rel="noreferrer">
               <ExternalLink size={13} />
