@@ -77,13 +77,21 @@ function BoardNodeImpl({ id, data, selected }: NodeProps<Node<KanbanData>>) {
     )
   }
   const onDrop = (e: React.DragEvent, col: string, before?: string) => {
+    setOver(null)
     const d = dropData<{ node: string; card: string }>(e, CARD)
     if (!d || d.node !== id) return
     e.preventDefault()
     e.stopPropagation()
     move(d.card, col, before)
   }
-  const accepts = (e: React.DragEvent) => e.dataTransfer.types.includes(CARD) && e.preventDefault()
+  // While a card is dragged, a line shows where it will land: before a card, or at the column's end.
+  const [over, setOver] = useState<{ col: string; before?: string } | null>(null)
+  const accepts = (col: string, before?: string) => (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(CARD)) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (over?.col !== col || over.before !== before) setOver({ col, before })
+  }
 
   return (
     <>
@@ -92,7 +100,7 @@ function BoardNodeImpl({ id, data, selected }: NodeProps<Node<KanbanData>>) {
         <Head id={id} icon={<Columns3 size={15} color="var(--muted)" />} title="Board" />
         <div className="kb nodrag nowheel">
           {columns.map((col) => (
-            <div key={col.id} className="kb-col" onDragOver={accepts} onDrop={(e) => onDrop(e, col.id)}>
+            <div key={col.id} className="kb-col" onDragOver={accepts(col.id)} onDragLeave={(e) => e.currentTarget === e.target && setOver(null)} onDrop={(e) => onDrop(e, col.id)}>
               <div className="kb-colhead">
                 <i />
                 {renaming === col.id ? (
@@ -126,14 +134,25 @@ function BoardNodeImpl({ id, data, selected }: NodeProps<Node<KanbanData>>) {
               {col.cards.map((card) => (
                 <div
                   key={card.id}
-                  className={`kb-card ${card.done ? 'done' : ''}`}
+                  className={`kb-card ${card.done ? 'done' : ''} ${over?.col === col.id && over.before === card.id ? 'drop-before' : ''}`}
                   draggable
                   onDragStart={(e) => dragData(e, CARD, { node: id, card: card.id })}
-                  onDragOver={accepts}
+                  onDragEnd={() => setOver(null)}
+                  onDragOver={accepts(col.id, card.id)}
                   onDrop={(e) => onDrop(e, col.id, card.id)}
                   onClick={() => setDialog({ col: col.id, card })}
                 >
                   <span className="bar" style={{ background: PRIORITY[card.priority].color }} />
+                  <button
+                    className="kb-del"
+                    title="Delete card"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeCard(card.id)
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
                   <button
                     className="tick"
                     title={card.done ? 'Mark as not done' : 'Mark as done'}
@@ -164,8 +183,9 @@ function BoardNodeImpl({ id, data, selected }: NodeProps<Node<KanbanData>>) {
                   </div>
                 </div>
               ))}
+              {over?.col === col.id && !over.before && col.cards.length > 0 && <div className="kb-drop" />}
               {!col.cards.length && (
-                <div className="kb-empty">
+                <div className={`kb-empty ${over?.col === col.id ? 'over' : ''}`}>
                   <Square size={14} /> No cards
                 </div>
               )}
@@ -310,7 +330,7 @@ function CalendarNodeImpl({ id, data, selected }: NodeProps<Node<CalendarData>>)
             {grid.map((c) => (
               <div
                 key={c.date}
-                className={`cal-cell ${c.inMonth ? '' : 'out'}`}
+                className={`cal-cell ${c.inMonth ? '' : 'out'} ${c.date === t ? 'is-today' : ''}`}
                 onClick={() => setDialog({ date: c.date })}
                 onDragOver={(e) => e.dataTransfer.types.includes(EVENT) && e.preventDefault()}
                 onDrop={(e) => {
@@ -442,7 +462,9 @@ function ChecklistNodeImpl({ id, data, selected }: NodeProps<Node<ChecklistData>
         <Head id={id} icon={<ListChecks size={15} color="var(--muted)" />} title="Checklist" />
         <div className="cl nodrag nowheel">
           <div className="cl-sum">
-            <span className="ring">{items.length - done}</span>
+            <span className="ring" style={{ ['--p' as string]: `${items.length ? (done / items.length) * 360 : 0}deg` }}>
+              <b>{items.length - done}</b>
+            </span>
             <span>
               <b>{items.length ? (done === items.length ? 'All done' : `${items.length - done} to go`) : 'No objectives'}</b>
               <small>{items.length ? `${done} of ${items.length} done` : 'Add one to begin'}</small>
