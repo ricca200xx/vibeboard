@@ -15,6 +15,7 @@ import {
   Globe,
   Image,
   LayoutGrid,
+  Link2,
   ListChecks,
   Maximize2,
   Minus,
@@ -38,7 +39,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api'
 import { addImage, addOrchestrator, insertCard, nid } from '../board'
-import { consoles, GROUP_COLORS, useStore, workspace, type ConsoleData, type GroupData, type ShapeKind } from '../store'
+import { consoles, GROUP_COLORS, useStore, workspace, type ConsoleData, type GroupData, type LinkKind, type ShapeKind } from '../store'
 import { agentById } from '../../shared/agents.js'
 import { AgentIcon } from './icons'
 import { Composer } from './BottomBar'
@@ -247,9 +248,18 @@ function MoreList({ at, onDone }: { at: Point; onDone: () => void }) {
   )
 }
 
+const LINKS: [LinkKind, string, string][] = [
+  ['handoff', 'Pass the work on', 'When it finishes, the other one picks up'],
+  ['review', 'Reviewer', 'The other one reviews until it says APPROVED'],
+  ['forward', 'Forward every reply', 'Each reply goes across word for word'],
+  ['condition', 'Only if…', 'Pass it on only when the reply contains a text (set it on the wire)'],
+  ['context', 'Share context', 'A summary for context, sent by hand from the wire'],
+]
+
 // ---------- a node: what you can do to that one thing ----------
 function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () => void }) {
-  const [sub, setSub] = useState<'groups' | 'orchs' | 'agents' | 'rename' | 'close' | 'colour' | null>(null)
+  const [sub, setSub] = useState<'groups' | 'orchs' | 'agents' | 'rename' | 'close' | 'colour' | 'link' | null>(null)
+  const [linkTo, setLinkTo] = useState<string | null>(null)
   const s = useStore.getState()
   const ws = workspace(s)!
   const live = useStore((st) => st.live[node.id])
@@ -274,6 +284,45 @@ function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () =
           <input name="name" autoFocus defaultValue={label} onFocus={(e) => e.target.select()} />
           <button className="btn primary sm">Save</button>
         </form>
+      </Panel>
+    )
+  if (sub === 'link' && linkTo)
+    return (
+      <Panel at={at} title="How should they work together?" onBack={() => setLinkTo(null)} width={300}>
+        <div className="ctx-list">
+          {LINKS.map(([kind, title, sub2]) => (
+            <button
+              key={kind}
+              className="tall"
+              onClick={run(() => {
+                if (!s.connectConsoles(node.id, linkTo)) return
+                const edge = workspace(useStore.getState())!.edges.find((e) => e.type === 'handoff' && e.source === node.id && e.target === linkTo)
+                if (edge) s.setEdgeData(edge.id, { kind })
+                s.notify(`Linked: ${title.toLowerCase()}`)
+              })}
+            >
+              <span>
+                <b>{title}</b>
+                <small>{sub2}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </Panel>
+    )
+  if (sub === 'link')
+    return (
+      <Panel at={at} title={`Link ${label} to…`} onBack={() => setSub(null)}>
+        <div className="ctx-list">
+          {consoles(ws.nodes)
+            .filter((n) => n.id !== node.id && n.data.agent !== 'shell')
+            .map((n) => (
+              <button key={n.id} onClick={() => setLinkTo(n.id)}>
+                <AgentIcon id={n.data.agent} size={22} /> {n.data.name}
+              </button>
+            ))}
+          {!consoles(ws.nodes).some((n) => n.id !== node.id && n.data.agent !== 'shell') && <p className="ctx-hint">Link to another agent console: there is none yet.</p>}
+        </div>
       </Panel>
     )
   if (sub === 'groups')
@@ -350,6 +399,7 @@ function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () =
           ['Restart', <RotateCw size={15} />, run(() => s.restartConsole(node.id))],
           live ? [live.paused ? 'Resume' : 'Pause', live.paused ? <Play size={15} /> : <Pause size={15} />, run(() => api.signal(node.id, live.paused ? 'SIGCONT' : 'SIGSTOP'))] : null,
           ['Focus', <Crosshair size={15} />, run(() => s.jumpTo(node.id))],
+          ['Link to…', <Link2 size={15} />, () => setSub('link'), true],
           ['Add to group', <LayoutGrid size={15} />, () => setSub('groups'), true],
           ['Wire to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true],
           ['Close…', <Trash2 size={15} />, () => setSub('close'), true],

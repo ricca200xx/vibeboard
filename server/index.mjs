@@ -15,6 +15,7 @@ import { readTranscript } from './transcript.mjs'
 import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
 import { createScans } from './scan.mjs'
+import { approved, linkMessage, matches } from '../shared/links.js'
 
 const PORT = Number(process.env.PORT) || 4317
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
@@ -636,20 +637,28 @@ const server = http.createServer(async (req, res) => {
       if (!from) return json(res, 409, { error: `${fromName} is not running` })
       if (!to) return json(res, 409, { error: `${toName} is not running` })
       if (from === to) return json(res, 400, { error: 'an agent cannot hand off to itself' })
-      const key = `${from.id}>${to.id}`
+      const mode = ['brief', 'reply', 'review', 'feedback', 'context'].includes(body.mode) ? body.mode : 'brief'
+      // Forwarding and conditions look at what A said last: Claude's transcript reply, or its screen.
+      const said = () => {
+        const { context, lastReply } = conversationText(from)
+        return lastReply || context.slice(-3000)
+      }
+      if (body.pattern && !matches(said(), String(body.pattern))) return json(res, 200, { ok: true, sent: false })
+      if (mode === 'feedback' && approved(said())) return json(res, 200, { ok: true, sent: false, approved: true })
+      const key = `${from.id}>${to.id}:${mode}`
       if (Date.now() - (recentHandoffs.get(key) || 0) < 20_000) return json(res, 200, { ok: true, duplicate: true })
       recentHandoffs.set(key, Date.now())
       broadcast({ type: 'handoff', from: from.id, to: to.id, state: 'summarizing' })
-      const brief = await handoffBrief(from)
+      const needsBrief = mode === 'brief' || mode === 'review' || mode === 'context'
+      const brief = needsBrief ? await handoffBrief(from) : ''
       if (sessions.get(to.id) !== to) {
         broadcast({ type: 'handoff', from: from.id, to: to.id, state: 'failed' })
         return json(res, 409, { error: `${toName} stopped before the hand-off arrived` })
       }
-      const role = typeof body.role === 'string' && body.role.trim() ? `\n\nYour role: ${body.role.trim().slice(0, 500)}` : ''
-      sendPrompt(to, `Hand-off from ${fromName}. Here is where they left off:\n\n${brief}${role}\n\nPick up from here.`)
+      sendPrompt(to, linkMessage(mode, { fromName, brief, reply: needsBrief ? '' : said(), role: typeof body.role === 'string' ? body.role : '' }))
       setStatus(to, 'working')
       broadcast({ type: 'handoff', from: from.id, to: to.id, state: 'sent' })
-      return json(res, 200, { ok: true })
+      return json(res, 200, { ok: true, sent: true })
     }
     if (route === 'pty' && id) {
       const s = sessions.get(id)

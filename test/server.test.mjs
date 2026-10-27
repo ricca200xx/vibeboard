@@ -186,6 +186,14 @@ test('a hand-off carries one console\'s work to another as a prompt', async () =
   assert.ok(await until(async () => /Hand-off from Maya[\s\S]*WORK_23_DONE/.test(await tail('t-to'))), 'brief never reached the next console')
   assert.equal((await (await handoff({})).json()).duplicate, true, 'a second tab firing the same hand-off is ignored')
   assert.equal((await handoff({ to: 'nope', toName: 'Ghost' })).status, 409)
+  // Other kinds of wire: a condition that does not match sends nothing, one that matches does;
+  // forwarding sends what A said word for word; a reviewer that approved sends no feedback back.
+  assert.equal((await (await handoff({ mode: 'reply', pattern: 'NOT_THERE' })).json()).sent, false)
+  assert.equal((await (await handoff({ mode: 'reply', pattern: 'work_23' })).json()).sent, true)
+  assert.ok(await until(async () => /Maya just replied:[\s\S]*WORK_23_DONE/.test(await tail('t-to'))), 'forwarded reply never arrived')
+  a.send(JSON.stringify({ t: 'i', d: 'echo APPROVED\r' }))
+  assert.ok(await until(async () => /\nAPPROVED/.test(await tail('t-from'))))
+  assert.equal((await (await handoff({ mode: 'feedback' })).json()).approved, true)
   await api('DELETE', '/api/pty/t-from')
   await api('DELETE', '/api/pty/t-to')
   a.close()

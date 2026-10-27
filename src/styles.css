@@ -4804,3 +4804,111 @@ textarea.field {
   font-weight: 600;
   color: var(--text);
 }
+/* ---------- kinds of wire between agents ---------- */
+.react-flow__edge-path.handoff-edge.kind-review {
+  stroke: color-mix(in srgb, #a98bfa 80%, transparent);
+}
+.react-flow__edge-path.handoff-edge.kind-forward {
+  stroke: color-mix(in srgb, #4a8bf0 80%, transparent);
+}
+.react-flow__edge-path.handoff-edge.kind-condition {
+  stroke: color-mix(in srgb, #e0a43a 85%, transparent);
+  stroke-dasharray: 9 5;
+}
+.react-flow__edge-path.handoff-edge.kind-context {
+  stroke: var(--muted);
+  stroke-dasharray: 2 6;
+  stroke-linecap: round;
+}
+.handoff-pill.kind-review {
+  color: #c4b0ff;
+}
+.handoff-pill.kind-forward {
+  color: #8fb6ff;
+}
+.handoff-pill.kind-condition {
+  color: #f0c46a;
+}
+.handoff-pill.kind-context {
+  color: var(--muted);
+}
+.link-menu {
+  width: 300px;
+}
+.link-menu .menu-item.kind {
+  align-items: flex-start;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.link-menu .menu-item.kind .ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--panel-3);
+}
+.link-menu .menu-item.kind b {
+  display: block;
+  font-size: 13px;
+}
+.link-menu .menu-item.kind small {
+  display: block;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.link-menu .menu-item.kind.on {
+  background: var(--accent-soft);
+}
+.link-menu .menu-item.kind.on .ico {
+  background: var(--accent);
+  color: #fff;
+}
+.link-field {
+  display: grid;
+  gap: 5px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.link-field.row {
+  grid-template-columns: 1fr 56px;
+  align-items: center;
+}
+.link-field input {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-3);
+  color: var(--text);
+  outline: 0;
+}
+.link-field input:focus {
+  border-color: var(--accent);
+}
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+.ctx-list button.tall {
+  padding: 7px 8px;
+}
+.ctx-list button.tall b {
+  display: block;
+  font-size: 13px;
+}
+.ctx-list button.tall small {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+.handoff-menu.up {
+  top: auto;
+  bottom: 34px;
+}

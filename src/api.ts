@@ -20,6 +20,8 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 export type Subagent = { id: string; type: string; task: string; status: 'running' | 'done'; startedAt: number; endedAt?: number }
 export type LiveSession = { id: string; agent: string; status: Status; statusAt?: number; cwd: string; paused: boolean; subagents?: Subagent[] }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
+// What a wire sends: see shared/links.js.
+export type LinkMode = 'brief' | 'reply' | 'review' | 'feedback' | 'context'
 export type GitInfo = {
   branch: string
   changes: number
@@ -77,8 +79,8 @@ export const api = {
   scan: (cwd: string, agent: string) => call<Scan>('POST', '/api/scan', { cwd, agent }),
   clearScan: (cwd: string) => call('DELETE', `/api/scan?cwd=${encodeURIComponent(cwd)}`),
   plan: (command: string, board: unknown) => call<{ reply: string; actions: import('./planner').PlanAction[] }>('POST', '/api/plan', { command, board }),
-  handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string }) =>
-    call<{ ok: boolean; duplicate?: boolean }>('POST', '/api/handoff', body),
+  handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string; mode?: LinkMode; pattern?: string }) =>
+    call<{ ok: boolean; duplicate?: boolean; sent?: boolean; approved?: boolean }>('POST', '/api/handoff', body),
   addLoop: (loop: Partial<Loop>) => call<Loop>('POST', '/api/loops', loop),
   updateLoop: (id: string, loop: Partial<Loop>) => call<Loop>('PUT', `/api/loops/${id}`, loop),
   runLoop: (id: string) => call<{ ok: boolean; consoles: number }>('POST', `/api/loops/${id}/run`, {}),

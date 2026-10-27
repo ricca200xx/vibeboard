@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from '@xyflow/react'
-import { api, connectEvents, type LiveSession, type Loop, type Scan, type ServerEvent, type Status } from './api'
+import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type Scan, type ServerEvent, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
@@ -33,7 +33,9 @@ export type ConsoleData = {
   profile?: string // account profile id: runs the CLI on that profile's own sign-in
   epoch: number
 }
-export type HandoffData = { auto: boolean }
+export type LinkKind = 'handoff' | 'review' | 'forward' | 'condition' | 'context'
+// A wire between two consoles (shared/links.js says what each kind sends). `reviewing`: the reviewer is on it.
+export type HandoffData = { auto: boolean; kind?: LinkKind; pattern?: string; rounds?: number; maxRounds?: number; reviewing?: boolean }
 export type GroupData = { label: string; color: string }
 export type NoteData = { text: string; color: string }
 export type TextData = { text: string; color?: string; font?: string; size?: 'S' | 'M' | 'L' | 'XL'; align?: 'left' | 'center' | 'right'; opacity?: number }
@@ -150,7 +152,7 @@ type S = {
   jumpTo: (id: string) => void
   connectConsoles: (source: string, target: string) => boolean
   toggleWire: (orch: string, target: string) => void
-  handoff: (from: string, to: string) => Promise<void>
+  handoff: (from: string, to: string, mode?: LinkMode, pattern?: string) => Promise<{ sent?: boolean; approved?: boolean } | undefined>
   setEdgeData: (id: string, patch: Partial<HandoffData>) => void
   removeEdge: (id: string) => void
   viewCenter: () => { x: number; y: number }
@@ -221,12 +223,41 @@ function refuseShell(id: string) {
 }
 
 // A console just finished: every automatic wire leaving it hands its work on.
+// A reviewer's verdict decides the next round: approved ends it, fixes go back to the author, and after
+// `maxRounds` the loop stops and hands over to you.
+// ponytail: wire state is patched on the open workspace only; a review running on a tab you are not
+// looking at keeps its round count until you open it.
 function autoHandoff(id: string) {
   const s = useStore.getState()
   const hit = findConsole(s, id)
   if (!hit) return
-  for (const e of hit.ws.edges) if (e.source === id && (e.data as HandoffData | undefined)?.auto) s.handoff(id, e.target)
+  const name = (cid: string) => findConsole(useStore.getState(), cid)?.node.data.name ?? 'The agent'
+  for (const e of hit.ws.edges) {
+    if (e.type !== 'handoff') continue
+    const d = (e.data ?? { auto: true }) as HandoffData
+    const kind = d.kind ?? 'handoff'
+    if (e.source === id && d.auto && kind !== 'context') {
+      if (kind === 'review') s.setEdgeData(e.id, { reviewing: true })
+      s.handoff(id, e.target, LINK_MODE[kind], kind === 'condition' ? d.pattern : undefined)
+    }
+    if (e.target === id && kind === 'review' && d.reviewing) {
+      s.setEdgeData(e.id, { reviewing: false })
+      const rounds = (d.rounds ?? 0) + 1
+      void s.handoff(id, e.source, 'feedback').then((r) => {
+        if (r?.approved) {
+          s.setEdgeData(e.id, { rounds: 0 })
+          s.notify(`${name(id)} approved ${name(e.source)}'s work`)
+        } else if (r?.sent && rounds >= (d.maxRounds ?? 3)) {
+          s.setEdgeData(e.id, { rounds: 0, auto: false })
+          s.notify(`Review stopped after ${rounds} rounds: ${name(e.source)} has the last fixes, the rest is yours`)
+        } else if (r?.sent) s.setEdgeData(e.id, { rounds })
+      })
+    }
+  }
 }
+
+// What a wire sends when its source finishes (or when you press Send now).
+export const LINK_MODE: Record<LinkKind, LinkMode> = { handoff: 'brief', review: 'review', forward: 'reply', condition: 'brief', context: 'context' }
 
 // Ask once, from a click (browsers only show the prompt after a user gesture).
 export function askNotifyPermission() {
@@ -751,15 +782,26 @@ export const useStore = create<S>((set, get) => {
       return true
     },
 
-    handoff: async (from, to) => {
+    handoff: async (from, to, mode = 'brief', pattern) => {
       const name = (id: string) => findConsole(get(), id)?.node.data
       const a = name(from)
       const b = name(to)
       if (!a || !b || refuseShell(to)) return
-      if (!get().live[to]) return get().notify(`${b.name} is not running`)
+      if (!get().live[to]) {
+        get().notify(`${b.name} is not running`)
+        return
+      }
       try {
-        const r = await api.handoff({ from, to, fromName: a.name, toName: b.name, role: b.role })
-        if (!r.duplicate) get().notify(`${a.name} handed off to ${b.name}`)
+        const r = await api.handoff({ from, to, fromName: a.name, toName: b.name, role: b.role, mode, pattern })
+        const said: Record<LinkMode, string> = {
+          brief: `${a.name} handed off to ${b.name}`,
+          reply: `${a.name}'s reply went to ${b.name}`,
+          review: `${b.name} is reviewing ${a.name}'s work`,
+          feedback: `${a.name}'s review went back to ${b.name}`,
+          context: `${b.name} now has ${a.name}'s context`,
+        }
+        if (r.sent) get().notify(said[mode])
+        return r
       } catch (e) {
         get().notify(`Hand-off failed: ${(e as Error).message}`)
       }
