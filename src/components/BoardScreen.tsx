@@ -50,7 +50,8 @@ import { ContextMenu, type MenuAt } from './ContextMenu'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
 import { BoardNode, CalendarNode, ChecklistNode, NEW_BOARD } from './Planner'
-import { newSticky, ShapeLayer, ShapeNode, ShapesMenu } from './Shapes'
+import { ArrowEdge, newSticky, ShapeLayer, ShapeNode, ShapesMenu } from './Shapes'
+import { DrawingBanner } from '../diagram'
 import { Inspector } from './Inspector'
 import { AgentIcon, ClaudeMark } from './icons'
 import { TopBar } from './TopBar'
@@ -81,7 +82,7 @@ const nodeTypes = {
   markdown: MarkdownNode,
 }
 
-const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge, command: CommandEdge }
+const edgeTypes = { handoff: HandoffEdge, helper: HelperEdge, memory: MemoryEdge, command: CommandEdge, arrow: ArrowEdge }
 
 
 // Moved nodes go last, followed by their own children (an image's ink): parents before children.
@@ -110,6 +111,7 @@ export function BoardScreen() {
           <Zoom />
         </div>
         <ResumeAllToast />
+        <DrawingBanner />
         <ReportVisible />
         {modal === 'mission' && <MissionMap />}
         {modal === 'loops' && <LoopsModal />}

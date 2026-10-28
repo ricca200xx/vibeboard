@@ -10,7 +10,7 @@ import {
   type ReactFlowInstance,
   type Viewport,
 } from '@xyflow/react'
-import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type DocJob, type Scan, type ServerEvent, type Status } from './api'
+import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type DiagramJob, type DocJob, type Scan, type ServerEvent, type Status } from './api'
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
@@ -52,7 +52,8 @@ export type CalendarData = { events: CalEvent[]; month?: string }
 export type ChecklistData = { items: { id: string; text: string; done: boolean }[] }
 export type ShapeKind = 'rect' | 'ellipse' | 'diamond' | 'line' | 'arrow'
 // points: a line's two ends as fractions of the node box, so resizing scales it.
-export type ShapeData = { kind: ShapeKind; stroke: string; fill: string; strokeWidth: number; dash: 'solid' | 'dashed' | 'dotted'; round: boolean; opacity: number; text: string; points?: [number, number, number, number] }
+// `sub` is a smaller second line under the text; `fontSize` overrides the label's size (diagrams use smaller boxes).
+export type ShapeData = { kind: ShapeKind; stroke: string; fill: string; strokeWidth: number; dash: 'solid' | 'dashed' | 'dotted'; round: boolean; opacity: number; text: string; sub?: string; fontSize?: number; points?: [number, number, number, number] }
 export type InkData = { paths: string[]; color: string; width?: number }
 
 export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean; scanned?: boolean }
@@ -102,6 +103,7 @@ type S = {
   loops: Loop[]
   scans: Scan[]
   docJobs: DocJob[]
+  diagramJobs: DiagramJob[]
   tool: Tool
   spawnAgent: string
   shapeKind: ShapeKind
@@ -157,6 +159,7 @@ type S = {
   toggleWire: (orch: string, target: string) => void
   handoff: (from: string, to: string, mode?: LinkMode, pattern?: string) => Promise<{ sent?: boolean; approved?: boolean } | undefined>
   setEdgeData: (id: string, patch: Partial<HandoffData>) => void
+  addEdge: (edge: Edge) => void
   removeEdge: (id: string) => void
   viewCenter: () => { x: number; y: number }
   savePreset: (preset: Omit<Preset, 'id'>) => void
@@ -356,6 +359,7 @@ export const useStore = create<S>((set, get) => {
     loops: [],
     scans: [],
     docJobs: [],
+    diagramJobs: [],
     tool: 'select',
     spawnAgent: 'claude',
     shapeKind: 'rect',
@@ -430,6 +434,7 @@ export const useStore = create<S>((set, get) => {
         } else if (e.type === 'loops') set({ loops: e.loops })
         else if (e.type === 'scans') set({ scans: e.scans })
         else if (e.type === 'docs') set({ docJobs: e.docs })
+        else if (e.type === 'diagrams') set({ diagramJobs: e.diagrams })
         else if (e.type === 'handoff')
           set((s) => {
             const handing = { ...s.handing }
@@ -817,6 +822,7 @@ export const useStore = create<S>((set, get) => {
     },
 
     setEdgeData: (id, patch) => updateWs((w) => ({ ...w, edges: w.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data, ...patch } } : e)) })),
+    addEdge: (edge) => updateWs((w) => ({ ...w, edges: [...w.edges, edge] })),
     removeEdge: (id) => updateWs((w) => ({ ...w, edges: w.edges.filter((e) => e.id !== id) })),
 
     // An orchestrator commands what it is wired to: a command wire per group or console, toggled from Connect.

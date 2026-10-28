@@ -1,5 +1,5 @@
 import { memo, useRef, useState } from 'react'
-import { NodeResizer, useReactFlow, type Node, type NodeProps } from '@xyflow/react'
+import { BaseEdge, EdgeLabelRenderer, Handle, NodeResizer, Position, useInternalNode, useReactFlow, type Edge, type EdgeProps, type InternalNode, type Node, type NodeProps } from '@xyflow/react'
 import { ArrowRight, Circle, Diamond, Minus, Square, StickyNote } from 'lucide-react'
 import { useStore, type ShapeData, type ShapeKind } from '../store'
 import { PAPER } from './Nodes'
@@ -43,8 +43,11 @@ function ShapeNodeImpl({ id, data, selected, width = 160, height = 100 }: NodePr
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={isLine(data.kind) ? 8 : 30} minHeight={isLine(data.kind) ? 8 : 30} />
-      <div className="shape-node" style={{ opacity: data.opacity }} onDoubleClick={() => !isLine(data.kind) && setEditing(true)}>
+      <div className="shape-node" style={{ opacity: data.opacity, fontSize: data.fontSize }} onDoubleClick={() => !isLine(data.kind) && setEditing(true)}>
         <svg width={w} height={h}>{shape}</svg>
+        {/* arrows between shapes (diagrams) attach here; ArrowEdge draws them outline to outline */}
+        <Handle type="target" position={Position.Top} className="cmd-handle" isConnectable={false} />
+        <Handle type="source" position={Position.Bottom} className="cmd-handle" isConnectable={false} />
         {!isLine(data.kind) &&
           (editing ? (
             <textarea
@@ -59,9 +62,12 @@ function ShapeNodeImpl({ id, data, selected, width = 160, height = 100 }: NodePr
               onKeyDown={(e) => e.key === 'Escape' && (e.target as HTMLTextAreaElement).blur()}
             />
           ) : (
-            data.text && (
+            (data.text || data.sub) && (
               <div className="label" style={{ color: data.stroke }}>
-                {data.text}
+                <span>
+                  {data.text}
+                  {data.sub && <small>{data.sub}</small>}
+                </span>
               </div>
             )
           ))}
@@ -70,6 +76,51 @@ function ShapeNodeImpl({ id, data, selected, width = 160, height = 100 }: NodePr
   )
 }
 export const ShapeNode = memo(ShapeNodeImpl)
+
+type Outline = { cx: number; cy: number; hw: number; hh: number; kind: ShapeKind }
+const outline = (n: InternalNode): Outline => {
+  const { x, y } = n.internals.positionAbsolute
+  const hw = (n.measured.width ?? 0) / 2
+  const hh = (n.measured.height ?? 0) / 2
+  return { cx: x + hw, cy: y + hh, hw, hh, kind: (n.data as ShapeData).kind }
+}
+// Where the line from the shape's centre towards (tx, ty) crosses its outline, `gap` further out.
+function exit(o: Outline, tx: number, ty: number, gap: number) {
+  const dx = tx - o.cx
+  const dy = ty - o.cy
+  const len = Math.hypot(dx, dy) || 1
+  const ax = Math.abs(dx) / (o.hw || 1)
+  const ay = Math.abs(dy) / (o.hh || 1)
+  const t = o.kind === 'ellipse' ? 1 / Math.hypot(ax, ay) : o.kind === 'diamond' ? 1 / (ax + ay) : 1 / Math.max(ax, ay)
+  return { x: o.cx + dx * (Number.isFinite(t) ? t : 0) + (dx / len) * gap, y: o.cy + dy * (Number.isFinite(t) ? t : 0) + (dy / len) * gap }
+}
+
+// An arrow between two shapes that follows them when they move, from outline to outline.
+function ArrowEdgeImpl({ id, source, target, data }: EdgeProps<Edge<{ label?: string }>>) {
+  const a = useInternalNode(source)
+  const b = useInternalNode(target)
+  if (!a || !b) return null
+  const from = outline(a)
+  const to = outline(b)
+  const p1 = exit(from, to.cx, to.cy, 4)
+  const p2 = exit(to, from.cx, from.cy, 5)
+  const ang = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+  const head = (side: number) => `${p2.x - 11 * Math.cos(ang + side)},${p2.y - 11 * Math.sin(ang + side)}`
+  return (
+    <>
+      <BaseEdge id={id} path={`M${p1.x},${p1.y} L${p2.x},${p2.y}`} className="arrow-edge" />
+      <path d={`M${head(-0.45)} L${p2.x},${p2.y} L${head(0.45)}`} className="arrow-edge arrow-head" />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div className="arrow-label" style={{ transform: `translate(-50%, -50%) translate(${(p1.x + p2.x) / 2}px, ${(p1.y + p2.y) / 2}px)` }}>
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
+}
+export const ArrowEdge = memo(ArrowEdgeImpl)
 
 // While the Shapes tool is on: drag to draw the picked shape, or click to drop one at its default size.
 export function ShapeLayer() {

@@ -16,6 +16,7 @@ import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
 import { createScans } from './scan.mjs'
 import { createDocs } from './docs.mjs'
+import { createDiagrams } from './diagrams.mjs'
 import * as files from './files.mjs'
 import { approved, linkMessage, matches } from '../shared/links.js'
 
@@ -286,6 +287,7 @@ const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
 const launchCli = (command, cwd) => spawn(SHELL, ['-lic', command], { cwd, env: CLEAN_ENV, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
 const scans = createScans({ broadcast, launch: launchCli })
 const docs = createDocs({ dir: path.join(DATA_DIR, 'docs'), broadcast, launch: launchCli })
+const diagrams = createDiagrams({ broadcast, launch: launchCli })
 
 // What a helper said last: its final reply when there is a transcript, otherwise its screen.
 const lastWords = (s) => {
@@ -779,6 +781,19 @@ const server = http.createServer(async (req, res) => {
       scans.clear(url.searchParams.get('cwd'))
       return json(res, 200, { ok: true })
     }
+    if (route === 'diagram' && req.method === 'POST') {
+      const { cwd, agent, focus } = JSON.parse(await readBody(req, 64 * 1024))
+      if (!isDir(cwd)) return json(res, 400, { error: 'not a directory' })
+      try {
+        return json(res, 200, diagrams.start(cwd, String(agent || 'claude'), String(focus ?? '')))
+      } catch (e) {
+        return json(res, 400, { error: e.message })
+      }
+    }
+    if (route === 'diagram' && req.method === 'DELETE') {
+      diagrams.clear(url.searchParams.get('cwd'))
+      return json(res, 200, { ok: true })
+    }
     if (route === 'docs') {
       const cwd = url.searchParams.get('cwd')
       try {
@@ -807,6 +822,7 @@ const server = http.createServer(async (req, res) => {
         '{"type":"group","names":["<console names>"],"label":"<group label>"}',
         '{"type":"frame","names":["<console names or group labels>"]}',
         '{"type":"handoff","from":"<console name>","to":"<console name>"}  (summarise one agent\'s work and give it to another)',
+        '{"type":"diagram","focus":"<optional: the part of the repo to draw>"}  (draw a diagram of the project\'s code on the board)',
         '{"type":"pause"}  {"type":"resume"}',
         'There is no action to stop or delete a console: if asked, say it needs the close button. If the command is unclear, return no actions and ask in "reply".',
       ].join('\n')
@@ -929,6 +945,7 @@ function attachEvents(ws) {
   ws.send(JSON.stringify({ type: 'loops', loops: loops.list() }))
   ws.send(JSON.stringify({ type: 'scans', scans: scans.list() }))
   ws.send(JSON.stringify({ type: 'docs', docs: docs.list() }))
+  ws.send(JSON.stringify({ type: 'diagrams', diagrams: diagrams.list() }))
   ws.on('close', () => eventClients.delete(ws))
 }
 

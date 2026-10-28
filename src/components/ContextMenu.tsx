@@ -18,6 +18,7 @@ import {
   Link2,
   ListChecks,
   Maximize2,
+  Workflow,
   Minus,
   Monitor,
   MoreHorizontal,
@@ -39,6 +40,7 @@ import {
 } from 'lucide-react'
 import { api } from '../api'
 import { addImage, addOrchestrator, insertCard, nid } from '../board'
+import { startDiagram } from '../diagram'
 import { consoles, GROUP_COLORS, useStore, workspace, type ConsoleData, type GroupData, type LinkKind, type ShapeKind } from '../store'
 import { agentById } from '../../shared/agents.js'
 import { AgentIcon } from './icons'
@@ -235,6 +237,7 @@ function MoreList({ at, onDone }: { at: Point; onDone: () => void }) {
     ['Board (kanban)', <Columns3 size={15} />, () => insertCard('kanban', 1060, 440, structuredClone(NEW_BOARD), at)],
     ['Calendar', <CalendarDays size={15} />, () => insertCard('calendar', 600, 500, { events: [] }, at)],
     ['Memory card', <StickyNote size={15} />, () => s.addNode({ id: nid('m'), type: 'memory', position: { x: at.x - 160, y: at.y - 120 }, style: { width: 320 }, data: {} })],
+    ['Draw a diagram of this repo', <Workflow size={15} />, () => startDiagram()],
     ['Fit the board', <Maximize2 size={15} />, () => s.flow?.fitView({ padding: 0.12, duration: 400 })],
   ]
   return (

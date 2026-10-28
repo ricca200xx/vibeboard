@@ -46,6 +46,17 @@ export type Fact = { kind: string; title: string; text: string }
 export type DocJob = { id: string; cwd: string; doc: string; title: string; agent: string; depth: Depth; startedAt: number; step: number; text: string; status: 'running' | 'done' | 'failed'; error: string | null }
 export type DocEntry = { id: string; template: string; ask?: string; title: string; agent: string; depth: Depth; createdAt: number; ms: number; words: number }
 export type Depth = 'quick' | 'balanced' | 'thorough'
+// A repo diagram laid out by the server (shared/diagram.js), in board units from its top-left corner.
+type Box = { x: number; y: number; w: number; h: number }
+export type DiagramLayout = {
+  title: { text: string; x: number; y: number }
+  frames: (Box & { id: string; label: string })[]
+  shapes: (Box & { id: string; label: string; sub: string; shape: 'box' | 'ellipse' | 'diamond'; group: string | null })[]
+  edges: { from: string; to: string; label: string }[]
+  width: number
+  height: number
+}
+export type DiagramJob = { id: string; cwd: string; agent: string; startedAt: number; step: number; status: 'running' | 'done' | 'failed'; error: string | null; diagram: DiagramLayout | null }
 export type Scan = { id: string; cwd: string; agent: string; startedAt: number; step: number; facts: Fact[]; status: 'running' | 'done' | 'failed'; error: string | null }
 
 export type Loop = {
@@ -94,6 +105,8 @@ export const api = {
   readDoc: (cwd: string, id: string) => call<DocEntry & { text: string }>('GET', `/api/docs/read?cwd=${encodeURIComponent(cwd)}&id=${encodeURIComponent(id)}`),
   writeDoc: (cwd: string, o: { template: string; ask?: string; agent: string; depth: Depth }) => call<DocJob>('POST', '/api/docs', { cwd, ...o }),
   clearDoc: (cwd: string) => call('DELETE', `/api/docs?cwd=${encodeURIComponent(cwd)}`),
+  diagram: (cwd: string, agent: string, focus = '') => call<DiagramJob>('POST', '/api/diagram', { cwd, agent, focus }),
+  clearDiagram: (cwd: string) => call('DELETE', `/api/diagram?cwd=${encodeURIComponent(cwd)}`),
   plan: (command: string, board: unknown) => call<{ reply: string; actions: import('./planner').PlanAction[] }>('POST', '/api/plan', { command, board }),
   handoff: (body: { from: string; to: string; fromName: string; toName: string; role?: string; mode?: LinkMode; pattern?: string }) =>
     call<{ ok: boolean; duplicate?: boolean; sent?: boolean; approved?: boolean }>('POST', '/api/handoff', body),
@@ -123,6 +136,7 @@ export type ServerEvent =
   | { type: 'loops'; loops: Loop[] }
   | { type: 'scans'; scans: Scan[] }
   | { type: 'docs'; docs: DocJob[] }
+  | { type: 'diagrams'; diagrams: DiagramJob[] }
   | { type: 'subagents'; id: string; subagents: Subagent[] }
   | { type: 'handoff'; from: string; to: string; state: 'summarizing' | 'sent' | 'failed' }
   | { type: 'helper'; parent: string; id: string; name: string; agent: string; role: string; cwd: string; yolo: boolean }

@@ -36,6 +36,8 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
   CLI reads the repo (read-only) and writes an overview, onboarding guide, architecture, README, API
   reference, data model or security overview, live on a page you can place on the board or export as PDF.
   *Markdown*: every note in the repo, read, edited or seen as a graph of the links between notes.
+  *Diagrams*: right-click the board, "Draw a diagram of this repo" (or ask the command bar), and your
+  CLI draws its architecture as areas, boxes and labelled arrows: plain shapes you can move and edit.
 - **Mission map, notes, sketches, web tiles, kanban, usage stats** and multiple workspaces per project.
 
 ## Requirements
@@ -85,12 +87,11 @@ the lead's own permission mode (YOLO only if the lead is), and a lead runs at mo
 
 ## Roadmap
 
-1. **Studios**: documents, diagrams and a code tree generated from the repo, onto the board.
-2. **Native macOS app**: the Electron window exists (`npm run desktop`); still to come: Dock icon,
+1. **Native macOS app**: the Electron window exists (`npm run desktop`); still to come: Dock icon,
    notifications, a signed `.dmg` and auto-update.
-3. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,
+2. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,
    light and dark mode.
-4. **Public release**: contribution guide, CI, tagged releases.
+3. **Public release**: contribution guide, CI, tagged releases.
 
 ## Inspiration
 

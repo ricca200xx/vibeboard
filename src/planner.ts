@@ -2,6 +2,7 @@
 // The action set has no way to stop or delete a console: that stays a confirmed, manual act.
 import { api } from './api'
 import { consoles, useStore, workspace } from './store'
+import { startDiagram } from './diagram'
 
 export type PlanAction =
   | { type: 'send'; to: string[]; text: string }
@@ -9,6 +10,7 @@ export type PlanAction =
   | { type: 'group'; names: string[]; label: string }
   | { type: 'frame'; names: string[] }
   | { type: 'handoff'; from: string; to: string }
+  | { type: 'diagram'; focus?: string }
   | { type: 'pause' }
   | { type: 'resume' }
 
@@ -26,7 +28,7 @@ function valid(a: PlanAction): boolean {
   if (a.type === 'group') return strings(x.names) && typeof x.label === 'string'
   if (a.type === 'frame') return strings(x.names)
   if (a.type === 'handoff') return typeof x.from === 'string' && typeof x.to === 'string'
-  return a.type === 'pause' || a.type === 'resume'
+  return a.type === 'pause' || a.type === 'resume' || a.type === 'diagram'
 }
 
 function scoped(scope?: Scope) {
@@ -116,7 +118,8 @@ export async function runPlanner(command: string, scope?: Scope): Promise<string
       const [from] = byName([a.from])
       const [to] = byName([a.to])
       if (from && to) await st.handoff(from, to)
-    } else if (a.type === 'pause') (scope ? signalScope('SIGSTOP') : st.pauseAll())
+    } else if (a.type === 'diagram') await startDiagram(typeof a.focus === 'string' ? a.focus : '')
+    else if (a.type === 'pause') (scope ? signalScope('SIGSTOP') : st.pauseAll())
     else if (a.type === 'resume') (scope ? signalScope('SIGCONT') : st.resumeAll())
     else if (a.type === 'group') {
       const ids = new Set(byName(a.names))
