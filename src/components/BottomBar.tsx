@@ -18,11 +18,41 @@ const ROLES: [string, string][] = [
 ]
 const FILL = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'shell', 'aider', 'cursor', 'qwen', 'copilot']
 
-function Chip({ label, hint, onClick, on }: { label: string; hint: string; onClick: () => void; on?: boolean }) {
+const CHIPS = {
+  new: ['#3ecfb2', '#f472b6'],
+  spawn: ['#7fd36b', '#f0553a'],
+  group: ['#d9c34a', '#8a7a3a'],
+  presets: ['#f5a33d', '#5b8cff'],
+  pause: ['#f0553a', '#5b8cff'],
+  resume: ['#f472b6', '#3ecf8e'],
+  memory: ['#a477ff', '#f5d547'],
+}
+
+function Chip({ k, label, hint, onClick, on }: { k: keyof typeof CHIPS; label: string; hint: string; onClick: () => void; on?: boolean }) {
+  const [a, b] = CHIPS[k]
   return (
-    <button className={`chip ${on ? 'on' : ''}`} title={hint} onClick={onClick}>
+    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} title={hint} onClick={onClick}>
       {label}
     </button>
+  )
+}
+
+// Several things selected: what can be done with them, in plain sight.
+function SelectionBar() {
+  const count = useStore((s) => workspace(s)?.nodes.filter((n) => n.selected).length ?? 0)
+  if (count < 2) return null
+  const s = useStore.getState()
+  return (
+    <div className="selection-bar" style={{ marginBottom: 8 }}>
+      {count} selected
+      <kbd>⌫ closes them</kbd>
+      <button className="btn" onClick={() => s.groupSelected()}>
+        Group
+      </button>
+      <button className="btn" onClick={() => s.deleteSelected()}>
+        Close
+      </button>
+    </div>
   )
 }
 
@@ -37,10 +67,12 @@ export function BottomBar() {
       <div style={{ position: 'relative' }}>
         {composer && <Composer onClose={() => setComposer(false)} />}
         {modal === 'presets' && <Presets />}
+        <SelectionBar />
         <div className="chips">
-          <Chip label="New agent" hint="Start one more agent" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
-          <Chip label="4 agents" hint="Start four agents at once" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
+          <Chip k="new" label="New agent" hint="Start one more agent" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
+          <Chip k="spawn" label="4 agents" hint="Start four agents at once" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
           <Chip
+            k="group"
             label="Group"
             hint="Put the selected agents in a group, or start a new group"
             on={composer}
@@ -50,10 +82,10 @@ export function BottomBar() {
               else setComposer((v) => !v)
             }}
           />
-          <Chip label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
-          <Chip label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
-          <Chip label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
-          <Chip label="Memory" hint="Notes about this project to give to your agents" onClick={() => s.set({ modal: 'memory' })} />
+          <Chip k="presets" label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
+          <Chip k="pause" label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
+          <Chip k="resume" label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
+          <Chip k="memory" label="Memory" hint="Notes about this project to give to your agents" onClick={() => s.set({ modal: 'memory' })} />
         </div>
       </div>
       <CommandBar />
@@ -151,6 +183,9 @@ function Presets() {
   const selectedAgents = () => consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected).map((n) => n.data.agent)
   return (
     <div className="menu nowheel" style={{ bottom: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)', width: 400, maxHeight: '70vh', overflow: 'auto' }}>
+      <button className="icon-btn sm menu-close" title="Close" onClick={() => useStore.getState().set({ modal: null })}>
+        <X size={14} />
+      </button>
       <div className="menu-title">Teams</div>
       {TEAMS.map((t) => (
         <button

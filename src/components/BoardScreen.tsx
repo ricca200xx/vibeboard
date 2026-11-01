@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   useReactFlow,
   useViewport,
   type Node,
@@ -43,9 +44,6 @@ import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
 import { CommandEdge, HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
 import { OrchestratorNode } from './Orchestrator'
-import { CodeNode, CodeStudio } from './CodeStudio'
-import { DocumentNode, DocumentsStudio } from './DocumentsStudio'
-import { MarkdownNode, MarkdownStudio } from './MarkdownStudio'
 import { ContextMenu, type MenuAt } from './ContextMenu'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
@@ -63,6 +61,22 @@ import { MemoryCard, MemoryModal } from './MemoryModal'
 import { SettingsModal } from './Panels'
 import { themed } from '../theme'
 import { UsagePanel } from './UsagePanel'
+
+// A card from a studio shows a plain panel for the moment its code takes to arrive.
+function lazyCard(load: () => Promise<{ default: React.ComponentType<any> }>) {
+  const Card = lazy(load)
+  return (props: any) => (
+    <Suspense fallback={<div className="card-chunk-loading" />}>
+      <Card {...props} />
+    </Suspense>
+  )
+}
+const CodeStudio = lazy(() => import('./CodeStudio').then((m) => ({ default: m.CodeStudio })))
+const DocumentsStudio = lazy(() => import('./DocumentsStudio').then((m) => ({ default: m.DocumentsStudio })))
+const MarkdownStudio = lazy(() => import('./MarkdownStudio').then((m) => ({ default: m.MarkdownStudio })))
+const CodeNode = lazyCard(() => import('./CodeStudio').then((m) => ({ default: m.CodeNode })))
+const DocumentNode = lazyCard(() => import('./DocumentsStudio').then((m) => ({ default: m.DocumentNode })))
+const MarkdownNode = lazyCard(() => import('./MarkdownStudio').then((m) => ({ default: m.MarkdownNode })))
 
 const nodeTypes = {
   console: ConsoleNode,
@@ -120,9 +134,11 @@ export function BoardScreen() {
         {modal === 'memory' && <MemoryModal />}
         {modal === 'settings' && <SettingsModal />}
         {modal === 'usage' && <UsagePanel />}
-        {modal === 'code' && <CodeStudio />}
-        {modal === 'documents' && <DocumentsStudio />}
-        {modal === 'markdown' && <MarkdownStudio />}
+        <Suspense fallback={null}>
+          {modal === 'code' && <CodeStudio />}
+          {modal === 'documents' && <DocumentsStudio />}
+          {modal === 'markdown' && <MarkdownStudio />}
+        </Suspense>
       </div>
     </ReactFlowProvider>
   )
@@ -131,6 +147,8 @@ export function BoardScreen() {
 function Board() {
   const ws = useStore(workspace)!
   const tool = useStore((s) => s.tool)
+  // Keys must reach the board once the person has moved on from typing in a terminal.
+  const leaveTyping = () => (document.activeElement as HTMLElement | null)?.blur?.()
   const flow = useReactFlow()
   const { onNodesChange, onEdgesChange, setViewport, set } = useStore.getState()
   const [wiring, setWiring] = useState(false) // a wire is being dragged: every console becomes a drop target
@@ -138,17 +156,17 @@ function Board() {
 
   useEffect(() => set({ flow }), [flow])
 
-  // Backspace removes notes, text, ink and images; consoles only die from their own confirmed close.
+  // Backspace closes whatever is selected, consoles included; ⌘Z or the Undo button brings it back.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       const s = useStore.getState()
       if (e.key === 'Escape' && !t.closest('.xterm')) s.set({ tool: 'select', modal: null, connecting: null })
       if (t.closest('input, textarea, [contenteditable], .xterm')) return
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        workspace(s)
-          ?.nodes.filter((n) => n.selected && n.type !== 'console')
-          .forEach((n) => s.removeNode(n.id))
+      if (e.key === 'Backspace' || e.key === 'Delete') s.deleteSelected()
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault()
+        s.undoDelete()
       }
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
@@ -245,8 +263,10 @@ function Board() {
         onMoveEnd={(_, vp) => setViewport(vp)}
         onPaneClick={place}
         onNodeDragStop={onDragStop}
-        onNodeClick={(_, n) => {
+        onSelectionStart={leaveTyping}
+        onNodeClick={(e, n) => {
           const s = useStore.getState()
+          if (!(e.target as HTMLElement).closest('.console-body, input, textarea')) leaveTyping()
           if (s.tool === 'eraser' && n.type !== 'console' && n.type !== 'group') s.removeNode(n.id)
         }}
         onPaneContextMenu={(e) => {
@@ -265,6 +285,7 @@ function Board() {
         zoomOnPinch
         zoomOnScroll={false}
         selectionOnDrag={tool === 'select'}
+        selectionMode={SelectionMode.Partial}
         panOnDrag={[1, 2]}
         deleteKeyCode={null}
         multiSelectionKeyCode={['Shift', 'Meta', 'Control']}

@@ -11,6 +11,10 @@ const PORT = Number(process.env.PORT) || 4317
 const ORIGIN = `http://127.0.0.1:${PORT}`
 const ROOT = path.join(__dirname, '..')
 let server = null
+let quitting = false
+let restarts = []
+const MAX_RESTARTS = 3
+const RESTART_WINDOW_MS = 60_000
 
 const alive = () =>
   new Promise((resolve) => {
@@ -40,17 +44,34 @@ function startServer() {
 // A server already running on the port (npm run dev, a second window) is reused, not doubled.
 async function ensureServer() {
   if (await alive()) return
+  let failed = false
   server = startServer()
   server.on('exit', (code) => {
     server = null
-    if (code) console.error(`vibeboard server exited with ${code}`)
-    if (code && BrowserWindow.getAllWindows().length) dialog.showErrorBox('vibeboard stopped working', `Its server exited. Details are in ${logFile()}. Open vibeboard again to continue.`)
+    failed = true
+    if (quitting) return
+    console.error(`vibeboard server exited with ${code}`)
+    // After a crash the page reconnects by itself, and consoles offer to pick their conversation up.
+    if (BrowserWindow.getAllWindows().length) restartServer()
   })
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; i < 80 && !failed; i++) {
     if (await alive()) return
     await new Promise((r) => setTimeout(r, 250))
   }
   throw new Error(`the vibeboard server did not start on port ${PORT}`)
+}
+
+async function restartServer() {
+  restarts = [...restarts.filter((t) => Date.now() - t < RESTART_WINDOW_MS), Date.now()]
+  if (restarts.length > MAX_RESTARTS) {
+    dialog.showErrorBox('vibeboard stopped working', `Its server keeps stopping. Details are in ${logFile()}.`)
+    return app.quit()
+  }
+  try {
+    await ensureServer()
+  } catch (err) {
+    console.error(err.message)
+  }
 }
 
 // Frames only: the app's own page keeps every protection it has.
@@ -74,11 +95,12 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: 'vibeboard',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#161617' : '#f5f5f7',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0908' : '#f5f1ea',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
     show: !process.env.VIBEBOARD_DESKTOP_HIDDEN, // tests drive a hidden window over CDP
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true },
+    // Agents keep working while the window is behind others: their output must keep being drawn.
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, backgroundThrottling: false },
   })
   // Links meant for a new window ("Open in your browser") go to the real browser; nothing else opens.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -88,6 +110,10 @@ function createWindow() {
   // The board never navigates away from itself.
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(ORIGIN)) e.preventDefault()
+  })
+  // The server can be a moment late, or restarting.
+  win.webContents.on('did-fail-load', (_e, _code, _text, url, isMain) => {
+    if (isMain && url.startsWith(ORIGIN)) setTimeout(() => !win.isDestroyed() && win.loadURL(ORIGIN), 800)
   })
   win.loadURL(ORIGIN)
   return win
@@ -108,7 +134,45 @@ ipcMain.handle('pick-folder', async (e) => {
   return canceled ? null : filePaths[0]
 })
 
+// Quitting stops every agent, so it is never silent while any is running.
+async function runningAgents() {
+  try {
+    const res = await fetch(`${ORIGIN}/api/sessions`)
+    return (await res.json()).filter((s) => s.agent !== 'shell').length
+  } catch {
+    return 0
+  }
+}
+
+app.on('before-quit', async (e) => {
+  if (quitting || !server) return
+  e.preventDefault()
+  const n = await runningAgents()
+  if (n) {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      message: `Quit vibeboard and stop ${n} running agent${n > 1 ? 's' : ''}?`,
+      detail: 'Claude conversations can be picked up again next time.',
+      buttons: ['Quit', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+    })
+    if (response === 1) return
+  }
+  quitting = true
+  app.quit()
+})
+
 app.setName('vibeboard')
+
+// Opening it a second time brings the window that is already there to the front.
+if (!app.requestSingleInstanceLock()) app.exit(0)
+app.on('second-instance', () => {
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win) return createWindow()
+  if (win.isMinimized()) win.restore()
+  win.focus()
+})
 app.whenReady().then(async () => {
   allowFraming()
   try {

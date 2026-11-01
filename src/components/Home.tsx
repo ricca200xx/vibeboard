@@ -21,7 +21,7 @@ export function Home() {
             <ThemeToggle />
           </div>
           <h1>
-            One board for your agents.
+            One board for <em>your agents</em>.
           </h1>
           <div className="lead">Open a project folder and your coding agents work side by side.</div>
         </div>

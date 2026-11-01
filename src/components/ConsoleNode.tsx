@@ -13,10 +13,10 @@ import { currentTheme, useTheme, type Theme } from '../theme'
 import { Conversation, SimpleFooter, StatusStrip } from './SimpleView'
 
 const DARK = {
-  background: '#161617',
-  foreground: '#e8e8ed',
+  background: '#0f0e0c',
+  foreground: '#ece4d8',
   cursor: '#f0553a',
-  cursorAccent: '#161617',
+  cursorAccent: '#0f0e0c',
   selectionBackground: 'rgba(240, 85, 58, 0.32)',
   black: '#1d1d1f',
   red: '#ff6b5b',
@@ -36,11 +36,11 @@ const DARK = {
   brightWhite: '#ffffff',
 }
 const LIGHT = {
-  background: '#ffffff',
-  foreground: '#1d1d1f',
-  cursor: '#d6421f',
-  cursorAccent: '#ffffff',
-  selectionBackground: 'rgba(214, 66, 31, 0.2)',
+  background: '#fffdf9',
+  foreground: '#211d18',
+  cursor: '#dd4a28',
+  cursorAccent: '#fffdf9',
+  selectionBackground: 'rgba(221, 74, 40, 0.2)',
   black: '#1d1d1f',
   red: '#c4261a',
   green: '#1a7f37',
@@ -375,7 +375,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
       <NodeResizer isVisible={selected} minWidth={380} minHeight={220} />
       <Handle type="target" position={Position.Left} className="wire-handle" />
       <Handle type="source" position={Position.Right} className="wire-handle" title="Drag onto another console: it takes over whenever this one finishes" />
-      <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 42%, var(--panel-3))` }}>
+      <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 48%, var(--panel-3))` }}>
         <WirePick id={id} />
         <div className="console-head" onDoubleClick={snapTo100}>
           <button className="agent-switch nodrag" onClick={() => setAgentMenu((v) => !v)} title={agentById(data.agent)?.name}>

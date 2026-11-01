@@ -127,7 +127,9 @@ type S = {
 
   init: () => void
   set: (patch: Partial<S>) => void
-  notify: (msg: string) => void
+  notify: (msg: string, action?: { label: string; run: () => void }) => void
+  toastAction: { label: string; run: () => void } | null
+  confirming: { title: string; detail: string; yes: string; answer: (ok: boolean) => void } | null
   openProject: (path: string) => void
   goHome: () => void
   forgetProject: (path: string) => void
@@ -145,6 +147,8 @@ type S = {
   reorderNode: (id: string, to: 'front' | 'back') => void
   updateData: (id: string, patch: Record<string, unknown>) => void
   removeNode: (id: string) => Promise<void>
+  deleteSelected: () => Promise<void>
+  undoDelete: () => Promise<void>
   addConsole: (agent: string, center: { x: number; y: number }, extra?: Partial<ConsoleData>, parentId?: string, reveal?: boolean) => string
   restartConsole: (id: string, fresh?: boolean) => Promise<void>
   resumeConsole: (id: string) => Promise<void>
@@ -288,6 +292,27 @@ function fitted(nodes: Node[], gid: string) {
 // A lead brought in a helper (server/helpers.mjs), which the server already runs: it joins the
 // lead's group (last in reading order) or sits beside the lead, with a dashed line back to it.
 // Any workspace, not just the open one: the lead may be working while you look elsewhere.
+// The browser's own confirm() freezes the page, terminals included, until it is answered.
+const askToConfirm = (title: string, detail: string, yes: string) =>
+  new Promise<boolean>((resolve) =>
+    useStore.setState({
+      confirming: {
+        title,
+        detail,
+        yes,
+        answer: (ok) => {
+          useStore.setState({ confirming: null })
+          resolve(ok)
+        },
+      },
+    }),
+  )
+
+// ponytail: one level of undo, and it restores the board as it was, so it expires before much else has moved.
+const UNDO_TOAST_MS = 7000
+const UNDO_WINDOW_MS = 60_000
+let lastDeleted: { wsId: string; nodes: Node[]; edges: Edge[]; consoleIds: string[]; at: number } | null = null
+
 // New agents open in the simple view unless Settings says otherwise; a shell is a terminal by nature.
 const consoleView = (agent: string): ConsoleData['view'] => (agent === 'shell' || useStore.getState().settings.simpleView === false ? 'terminal' : 'simple')
 
@@ -472,9 +497,11 @@ export const useStore = create<S>((set, get) => {
     },
 
     set: (patch) => set(patch),
-    notify: (msg) => {
-      set({ toast: msg })
-      setTimeout(() => get().toast === msg && set({ toast: null }), 2600)
+    toastAction: null,
+    confirming: null,
+    notify: (msg, action) => {
+      set({ toast: msg, toastAction: action ?? null })
+      setTimeout(() => get().toast === msg && set({ toast: null, toastAction: null }), action ? UNDO_TOAST_MS : 2600)
     },
 
     openProject: (path) =>
@@ -502,7 +529,7 @@ export const useStore = create<S>((set, get) => {
       const p = project(get())
       if (!p) return
       const ids = p.workspaces.flatMap((w) => consoles(w.nodes).map((n) => n.id)).filter((id) => get().live[id])
-      if (ids.length && !confirm(`Close ${p.name}? ${ids.length} running console${ids.length > 1 ? 's' : ''} will be stopped. The board is kept.`)) return
+      if (ids.length && !(await askToConfirm(`Close ${p.name}?`, `${ids.length} running agent${ids.length > 1 ? 's' : ''} will stop. The board is kept.`, 'Close project'))) return
       await Promise.all(ids.map((id) => api.kill(id).catch(() => {})))
       set({ active: null, modal: null })
     },
@@ -520,7 +547,7 @@ export const useStore = create<S>((set, get) => {
       if (!p || p.workspaces.length === 1) return get().notify('A project keeps at least one workspace')
       const ws = p.workspaces.find((w) => w.id === id)!
       const ids = consoles(ws.nodes).map((n) => n.id).filter((cid) => get().live[cid])
-      if (ids.length && !confirm(`Close ${ws.name}? ${ids.length} running console${ids.length > 1 ? 's' : ''} will be stopped.`)) return
+      if (ids.length && !(await askToConfirm(`Close ${ws.name}?`, `${ids.length} running agent${ids.length > 1 ? 's' : ''} will stop.`, 'Close workspace'))) return
       await Promise.all(ids.map((cid) => api.kill(cid).catch(() => {})))
       updateProject((pr) => {
         const workspaces = pr.workspaces.filter((w) => w.id !== id)
@@ -579,6 +606,38 @@ export const useStore = create<S>((set, get) => {
         edges: w.edges.filter((e) => e.source !== id && e.target !== id),
       }))
       if (node.parentId) get().fitGroup(node.parentId)
+    },
+
+    // The Delete key. Quick on purpose, so it has a way back: the board returns as it was, and Claude
+    // consoles pick their conversation up again. A shell's running program cannot come back.
+    deleteSelected: async () => {
+      const ws = workspace(get())
+      const chosen = ws?.nodes.filter((n) => n.selected) ?? []
+      if (!ws || !chosen.length) return
+      const consoleIds = chosen.filter((n) => n.type === 'console').map((n) => n.id)
+      lastDeleted = { wsId: ws.id, nodes: ws.nodes, edges: ws.edges, consoleIds, at: Date.now() }
+      await Promise.all(chosen.map((n) => get().removeNode(n.id)))
+      const agents = consoleIds.length
+      const others = chosen.length - agents
+      const words = [agents && `${agents} agent${agents > 1 ? 's' : ''} closed`, others && `${others} item${others > 1 ? 's' : ''} deleted`].filter(Boolean).join(', ')
+      get().notify(words.charAt(0).toUpperCase() + words.slice(1), { label: 'Undo', run: () => void get().undoDelete() })
+    },
+
+    undoDelete: async () => {
+      const last = lastDeleted
+      if (!last || Date.now() - last.at > UNDO_WINDOW_MS || workspace(get())?.id !== last.wsId) return
+      lastDeleted = null
+      set({ toast: null, toastAction: null })
+      await Promise.all(last.consoleIds.map(waitGone))
+      const restored = last.nodes.map((n) => {
+        if (!last.consoleIds.includes(n.id)) return n
+        const d = n.data as ConsoleData
+        const resume = d.resumable ?? d.lastSessionId
+        return { ...n, selected: false, data: { ...d, epoch: d.epoch + 1, sessionId: undefined, resumeOffer: false, lastSessionId: resume, resumeNext: !!resume } }
+      })
+      const nodeIds = new Set(restored.map((n) => n.id))
+      const edgeIds = new Set(last.edges.map((e) => e.id))
+      updateWs((w) => ({ ...w, nodes: [...restored, ...w.nodes.filter((n) => !nodeIds.has(n.id))], edges: [...last.edges, ...w.edges.filter((e) => !edgeIds.has(e.id))] }))
     },
 
     addConsole: (agent, center, extra, parentId, reveal = true) => {

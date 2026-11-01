@@ -187,6 +187,7 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
     const prompt = text.trim()
     if (!prompt || locked) return
     useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: prompt } }))
+    if (data.resumeOffer) useStore.getState().updateData(id, { resumeOffer: false }) // writing starts fresh, as the offer says
     setText('')
     api.prompt(id, prompt).catch((e) => {
       setText(prompt)

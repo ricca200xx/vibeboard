@@ -112,10 +112,28 @@ export function CodeStudio() {
             <button className="icon-btn sm" title="Show in Finder" onClick={() => api.reveal(p.path)}>
               <FolderOpen size={14} />
             </button>
+            <button className="icon-btn sm" title="Show another folder here" onClick={() => setAdding((v) => !v)}>
+              <FolderPlus size={14} />
+            </button>
             <button className="icon-btn sm" title="New file" onClick={() => setCreating((v) => !v)}>
               <Plus size={15} />
             </button>
           </div>
+          {adding && (
+            <PathInput
+              placeholder="/Users/you/another-folder"
+              onCancel={() => setAdding(false)}
+              onSubmit={async (dir) => {
+                try {
+                  await api.ls(dir)
+                  setRoots((r) => (r.includes(dir) ? r : [...r, dir]))
+                  setAdding(false)
+                } catch (e) {
+                  setError((e as Error).message)
+                }
+              }}
+            />
+          )}
           {creating && (
             <PathInput
               placeholder="src/new-file.ts"
@@ -143,52 +161,30 @@ export function CodeStudio() {
         </aside>
         <section className="studio-main">
           <div className="studio-bar">
-            {file ? (
+            {file && (
               <>
-                <CodeXml size={15} color="var(--muted)" />
-                <span className="crumbs">
+                <span className="crumbs" title={`${langLabel(file.path)} · ${lines(file.text)} lines · ${size(file.size)}`}>
                   {crumbs.map((c, i) => (
                     <span key={i} className={i === crumbs.length - 1 ? 'last' : ''}>
                       {c}
                     </span>
                   ))}
                 </span>
-                <span className="lang-chip">{langLabel(file.path)}</span>
-                <span className="meta">
-                  {lines(file.text)} lines · {size(file.size)}
-                </span>
-                {edited ? <span className="edited">• Edited</span> : <span className="meta">Saved</span>}
+                {edited && <span className="edited">• Not saved</span>}
               </>
-            ) : (
-              <span className="meta">Pick a file on the left</span>
             )}
             <span className="spacer" />
-            {adding ? (
-              <PathInput
-                placeholder="/Users/you/another-folder"
-                onCancel={() => setAdding(false)}
-                onSubmit={async (dir) => {
-                  try {
-                    await api.ls(dir)
-                    setRoots((r) => (r.includes(dir) ? r : [...r, dir]))
-                    setAdding(false)
-                  } catch (e) {
-                    setError((e as Error).message)
-                  }
-                }}
-              />
-            ) : (
-              <button className="btn sm" onClick={() => setAdding(true)} title="Show another folder in the tree">
-                <FolderPlus size={14} /> Add folder
+            {edited && (
+              <button className="btn primary sm" onClick={save} title="Save (⌘S)">
+                <Save size={14} /> Save
               </button>
             )}
-            <button className="btn sm" disabled={!edited} onClick={save} title="Save (⌘S)">
-              <Save size={14} /> Save
-            </button>
-            <button className="btn primary sm" disabled={!file} onClick={insert} title="Put this file on the board">
-              <PanelTop size={14} /> Insert
-            </button>
-            <button className="icon-btn" onClick={close}>
+            {file && (
+              <button className="btn sm" onClick={insert} title="Show this file as a card on the board">
+                <PanelTop size={14} /> Put on board
+              </button>
+            )}
+            <button className="icon-btn" title="Close" onClick={close}>
               <X size={17} />
             </button>
           </div>
@@ -211,8 +207,8 @@ export function CodeStudio() {
             ) : (
               <div className="studio-empty">
                 <CodeXml size={28} />
-                <b>Browse the repo</b>
-                <span>Open a file to read or edit it, then Insert it on the board as a card.</span>
+                <b>Pick a file on the left</b>
+                <span>Read it, change it here, or put it on the board.</span>
               </div>
             )}
           </div>

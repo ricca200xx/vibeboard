@@ -35,6 +35,11 @@ export function TopBar() {
     return () => clearInterval(t)
   }, [hasClaude])
 
+  // However many workspaces there are, the current one is in view.
+  useEffect(() => {
+    document.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [p.activeWs, p.workspaces.length])
+
   return (
     <div className="topbar">
       <h1 className="sr-only">{p.name}</h1>
@@ -46,6 +51,7 @@ export function TopBar() {
         <button className="project" title="Switch project" onClick={() => setProjMenu((v) => !v)}>
           <Folder size={15} fill="currentColor" strokeWidth={1.5} /> {p.name} <ChevronDown size={14} color="var(--muted)" />
         </button>
+        <div className="tab-list">
         {p.workspaces.map((w) => (
           <button
             key={w.id}
@@ -79,12 +85,13 @@ export function TopBar() {
             </span>
           </button>
         ))}
+        </div>
         <button className="icon-btn" title="New workspace" onClick={s.addWorkspace}>
           <Plus size={16} />
         </button>
 
         {projMenu && (
-          <div className="menu" style={{ top: 38, left: 0, width: 300 }} onMouseLeave={() => setProjMenu(false)}>
+          <div className="menu" style={{ top: 44, left: 0, width: 300 }} onMouseLeave={() => setProjMenu(false)}>
             <div className="menu-title">Projects</div>
             {projects.map((x) => (
               <button
@@ -110,13 +117,13 @@ export function TopBar() {
               <FolderOpen size={16} color="var(--muted)" />
               <span className="title">Open another folder…</span>
             </button>
-            <button className="menu-item" onClick={s.closeProject}>
-              <X size={16} color="var(--muted)" />
-              <span className="title">Close this project</span>
-            </button>
           </div>
         )}
       </div>
+
+      <button className="pill" title="Close this project: its agents stop" onClick={s.closeProject}>
+        <X size={15} /> Close
+      </button>
 
       <span className="spacer" />
 
