@@ -1,12 +1,33 @@
 # vibeboard
 
-An infinite canvas of real terminals for orchestrating CLI coding agents — Claude Code, Codex,
-Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
+An infinite canvas of real terminals for orchestrating CLI coding agents (Claude Code, Codex,
+Gemini, Aider, OpenCode, Copilot CLI and more), side by side, from one place. You do not need to know
+the terminal: every agent also has a simple view, with a conversation and plain buttons.
 
-> Early MVP. It runs today as a local web app on macOS; a native macOS app is next on the roadmap.
+> Early release. Mac only for now.
+
+## Download
+
+Get the latest disk image from [Releases](https://github.com/ricca200xx/vibeboard/releases/latest):
+`-arm64` for Apple silicon, the other one for Intel Macs. Open it and drag vibeboard to Applications.
+
+vibeboard is free and not signed with a paid Apple Developer ID, so macOS blocks it the first time:
+
+1. Open vibeboard and press **Done** on the warning.
+2. Go to **System Settings → Privacy & Security**, scroll down and press **Open Anyway** next to vibeboard.
+3. Open it again and confirm.
+
+You also need at least one coding agent on your Mac. If there is none, vibeboard offers to set up
+Claude Code. It types the install command into a terminal and you press Return to run it.
 
 ## What it does
 
+- **A simple view.** Each agent can show a conversation instead of a terminal: a plain sentence about
+  what it is doing, a box to write in, and buttons when it asks something, with the command it wants to
+  run written out. The real terminal keeps running underneath, one click away. Claude Code gets the full
+  conversation; other CLIs keep their terminal in view and get the sentence, the box and the buttons.
+- **At home on a Mac.** Light and dark themes that follow the system, the system font, and a tooltip on
+  everything that has no words.
 - **Real terminals on a board.** Every console is a real PTY running the agent CLI you choose,
   with your own shell environment. Consoles survive page reloads and reattach with their scrollback.
 - **Live status.** Claude Code consoles report *Working*, *Needs you* and *Done* through hooks
@@ -42,11 +63,12 @@ Gemini, Aider, OpenCode, Copilot CLI and more — side by side, from one place.
 
 ## Requirements
 
-- macOS (Linux likely works, untested)
-- Node.js 22+
+- macOS
 - The agent CLIs you want to use, installed and on your `PATH` (vibeboard detects them)
 
-## Run it
+## Run it from the source
+
+You need Node.js 24 or newer (Linux likely works, untested).
 
 ```bash
 npm install
@@ -67,6 +89,12 @@ have an inspector. It starts the same server with your own Node, or reuses one a
 npm run desktop
 ```
 
+The disk images (they carry their own Node, in `release/`):
+
+```bash
+npm run dist
+```
+
 If npm skipped Electron's download (some npm setups block install scripts), fetch it once with
 `node node_modules/electron/install.js`.
 
@@ -83,20 +111,21 @@ Board state, loops and the injected Claude hook settings live in `~/.vibeboard/`
 The server listens on `127.0.0.1` only and accepts requests from its own pages (Origin and Host are
 checked, which also blocks DNS rebinding). It has no authentication token, so any program running as
 your user on the same machine can drive the consoles. Don't expose the port. A lead's helpers run with
-the lead's own permission mode (YOLO only if the lead is), and a lead runs at most six at a time.
+the lead's own permission mode (Auto-approve only if the lead is), and a lead runs at most six at a time.
+
+The buttons of the simple view only ever press the keys the terminal itself would take. Before answering,
+the server checks that the question is still on screen and that the right option is highlighted.
+Nothing is ever approved on its own.
 
 ## Roadmap
 
-1. **Native macOS app**: the Electron window exists (`npm run desktop`); still to come: Dock icon,
-   notifications, a signed `.dmg` and auto-update.
-2. **Apple-style interface**: Liquid Glass toolbars and panels, system typography and accent colour,
-   light and dark mode.
-3. **Public release**: contribution guide, CI, tagged releases.
+1. **Signed app**: an Apple Developer ID, so that macOS opens it without the warning, then auto-update.
+2. **Public release**: contribution guide, CI on every change.
 
 ## Inspiration
 
 Inspired by [Symvibe](https://www.symvibe.com/). vibeboard is an independent open-source project,
-not affiliated with or endorsed by Symvibe; no code or assets from it are used.
+not affiliated with or endorsed by Symvibe or Apple; no code or assets from them are used.
 
 ## License
 

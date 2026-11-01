@@ -1,9 +1,9 @@
-// vibeboard as a macOS app: starts the local server (with the system's Node, so node-pty needs no
-// Electron rebuild), then shows the board in a real window. Web tiles become real browsers here:
-// pages that refuse to be framed (Google, GitHub…) load, because the window strips the headers that
-// forbid framing, for frames only.
+// vibeboard as a macOS app: starts the local server, then shows the board in a real window. Web tiles
+// become real browsers here: pages that refuse to be framed (Google, GitHub…) load, because the window
+// strips the headers that forbid framing, for frames only.
 const { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell } = require('electron')
 const { spawn } = require('node:child_process')
+const fs = require('node:fs')
 const http = require('node:http')
 const path = require('node:path')
 
@@ -22,14 +22,29 @@ const alive = () =>
     req.setTimeout(1000, () => req.destroy())
   })
 
+const logFile = () => path.join(app.getPath('logs'), 'server.log')
+
+// A downloaded app has no Node to count on, so it runs the server with the Node inside Electron (node-pty
+// ships prebuilt for it). From a checkout, the system's Node, as in `npm run dev`.
+function startServer() {
+  const env = { ...process.env, NODE_ENV: 'production', PORT: String(PORT) }
+  if (!app.isPackaged) {
+    const shell = process.env.SHELL || '/bin/zsh'
+    return spawn(shell, ['-lic', 'exec node server/index.mjs'], { cwd: ROOT, env, stdio: 'inherit' })
+  }
+  fs.mkdirSync(path.dirname(logFile()), { recursive: true })
+  const log = fs.openSync(logFile(), 'a')
+  return spawn(process.execPath, [path.join(ROOT, 'server', 'index.mjs')], { cwd: ROOT, env: { ...env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['ignore', log, log] })
+}
+
 // A server already running on the port (npm run dev, a second window) is reused, not doubled.
 async function ensureServer() {
   if (await alive()) return
-  const shell = process.env.SHELL || '/bin/zsh'
-  server = spawn(shell, ['-lic', 'exec node server/index.mjs'], { cwd: ROOT, env: { ...process.env, NODE_ENV: 'production', PORT: String(PORT) }, stdio: 'inherit' })
+  server = startServer()
   server.on('exit', (code) => {
     server = null
     if (code) console.error(`vibeboard server exited with ${code}`)
+    if (code && BrowserWindow.getAllWindows().length) dialog.showErrorBox('vibeboard stopped working', `Its server exited. Details are in ${logFile()}. Open vibeboard again to continue.`)
   })
   for (let i = 0; i < 80; i++) {
     if (await alive()) return
@@ -100,6 +115,7 @@ app.whenReady().then(async () => {
     await ensureServer()
   } catch (err) {
     console.error(err.message)
+    dialog.showErrorBox('vibeboard could not start', `${err.message}. Another program may be using the port, or the details may be in ${logFile()}.`)
     app.quit()
     return
   }

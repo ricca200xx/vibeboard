@@ -36,6 +36,7 @@ export function TopBar() {
 
   return (
     <div className="topbar">
+      <h1 className="sr-only">{p.name}</h1>
       <button className="pill" title="Back to your projects: agents keep running" onClick={s.goHome}>
         <ChevronLeft size={16} /> Home
       </button>

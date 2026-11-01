@@ -42,7 +42,8 @@ fs.mkdirSync(DATA_DIR, { recursive: true })
 // When the server itself is started from a Claude Code terminal, its session variables
 // (child-session marker, session id, messaging token) must not leak into the consoles:
 // a Claude that thinks it is a child session stops saving transcripts, which breaks resume.
-const STRIP_ENV = /^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_JOB_DIR$|CLAUDE_PID$)/
+// The desktop app runs this server through its own Electron: tools started in a console must not inherit that.
+const STRIP_ENV = /^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_JOB_DIR$|CLAUDE_PID$|ELECTRON_RUN_AS_NODE$)/
 const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !STRIP_ENV.test(k)))
 
 // Claude Code gets these hooks through --settings, so the user's global config stays untouched.
