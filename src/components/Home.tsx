@@ -3,6 +3,7 @@ import { ArrowLeft, Folder, FolderGit2, FolderOpen, Plus, Search, X } from 'luci
 import { api } from '../api'
 import { consoles, useStore } from '../store'
 import { Spark } from './icons'
+import { ThemeToggle } from './Panels'
 
 export function Home() {
   const projects = useStore((s) => s.projects)
@@ -16,7 +17,8 @@ export function Home() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
             <Spark size={26} color="var(--accent)" />
-            <span style={{ fontWeight: 600, fontSize: 15 }}>vibeboard</span>
+            <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>vibeboard</span>
+            <ThemeToggle />
           </div>
           <h1>
             One board for your agents.

@@ -1,7 +1,22 @@
-import { CircleUserRound, Settings, X } from 'lucide-react'
+import { CircleUserRound, Moon, Settings, Sun, X } from 'lucide-react'
 import { askNotifyPermission, useStore } from '../store'
 import { AGENTS } from '../../shared/agents.js'
+import { useTheme } from '../theme'
 import { AgentIcon } from './icons'
+
+// Day or night in one click, wherever you are. Settings also offers "Same as my Mac".
+export function ThemeToggle() {
+  const theme = useTheme()
+  const flip = () => {
+    const s = useStore.getState()
+    s.set({ settings: { ...s.settings, theme: theme === 'dark' ? 'light' : 'dark' } })
+  }
+  return (
+    <button className="icon-btn" title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'} onClick={flip}>
+      {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+    </button>
+  )
+}
 
 export function SettingsModal() {
   const settings = useStore((s) => s.settings)

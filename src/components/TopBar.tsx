@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Briefcase, ChevronDown, ChevronLeft, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
 import { consoles, project, useStore } from '../store'
 import { ClaudeMark } from './icons'
+import { ThemeToggle } from './Panels'
 import { fmtTokens, loadLimits, loadTokens, useUsage } from './UsagePanel'
 
 const todayKey = () => {
@@ -138,6 +139,7 @@ export function TopBar() {
       <button className="icon-btn" title="Mission map: all your agents at a glance" onClick={() => s.set({ modal: useStore.getState().modal === 'mission' ? null : 'mission' })}>
         <Briefcase size={17} />
       </button>
+      <ThemeToggle />
       <button className="icon-btn" title="Settings" onClick={() => s.set({ modal: 'settings' })}>
         <Settings size={17} />
       </button>
