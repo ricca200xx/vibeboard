@@ -33,7 +33,7 @@ export function parseUsageScreen(text) {
   return { limits, insights }
 }
 
-const screenOf = (term) => {
+export const screenOf = (term) => {
   const b = term.buffer.active
   const out = []
   for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '')

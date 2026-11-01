@@ -18,7 +18,10 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
 }
 
 export type Subagent = { id: string; type: string; task: string; status: 'running' | 'done'; startedAt: number; endedAt?: number }
-export type LiveSession = { id: string; agent: string; status: Status; statusAt?: number; cwd: string; paused: boolean; subagents?: Subagent[] }
+// A question read off the agent's screen (shared/prompts.js).
+export type Ask = { id: string; question: string; options: { label: string; hint: string }[]; selected: number }
+export type ConversationItem = { kind: 'user' | 'agent' | 'step' | 'note'; text: string; failed?: boolean; pending?: boolean }
+export type LiveSession = { id: string; agent: string; status: Status; statusAt?: number; cwd: string; paused: boolean; subagents?: Subagent[]; ask?: Ask | null; activity?: string | null; started?: boolean; tick?: number }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
 // A project folder as the Studios see it (server/files.mjs).
 export type FileEntry = { name: string; path: string; dir?: boolean; children?: FileEntry[] }
@@ -78,7 +81,10 @@ export type Loop = {
 export const api = {
   getState: () => call<Record<string, unknown>>('GET', '/api/state'),
   putState: (s: unknown) => call('PUT', '/api/state', s),
-  agents: () => call<string[]>('GET', '/api/agents'),
+  agents: (refresh = false) => call<string[]>('GET', `/api/agents${refresh ? '?refresh=1' : ''}`),
+  conversation: (id: string) => call<{ items: ConversationItem[] }>('GET', `/api/pty/${id}/conversation`),
+  stop: (id: string) => call('POST', `/api/pty/${id}/stop`),
+  choose: (id: string, askId: string, index: number) => call('POST', `/api/pty/${id}/choose`, { askId, index }),
   kill: (id: string) => call('DELETE', `/api/pty/${id}`),
   input: (id: string, data: string) => call('POST', `/api/pty/${id}/input`, { data }),
   prompt: (id: string, prompt: string) => call('POST', `/api/pty/${id}/input`, { prompt }),
@@ -138,6 +144,9 @@ export type ServerEvent =
   | { type: 'docs'; docs: DocJob[] }
   | { type: 'diagrams'; diagrams: DiagramJob[] }
   | { type: 'subagents'; id: string; subagents: Subagent[] }
+  | { type: 'ask'; id: string; ask: Ask | null }
+  | { type: 'activity'; id: string; text: string | null }
+  | { type: 'conversation'; id: string; started: boolean }
   | { type: 'handoff'; from: string; to: string; state: 'summarizing' | 'sent' | 'failed' }
   | { type: 'helper'; parent: string; id: string; name: string; agent: string; role: string; cwd: string; yolo: boolean }
 

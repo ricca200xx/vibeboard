@@ -46,6 +46,13 @@ export function SettingsModal() {
             </div>
           </div>
           <div className="toggle-row">
+            <button className={`toggle ${settings.simpleView !== false ? 'on' : ''}`} onClick={() => patch({ simpleView: settings.simpleView === false })} />
+            <span>
+              New agents open in the simple view
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>A conversation and plain buttons. The terminal is always one click away.</div>
+            </span>
+          </div>
+          <div className="toggle-row">
             <button className={`toggle ${settings.yolo ? 'on' : ''}`} onClick={() => patch({ yolo: !settings.yolo })} />
             <span>
               New agents do not ask before acting (Auto-approve)

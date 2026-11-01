@@ -112,6 +112,7 @@ export function BoardScreen() {
           <Zoom />
         </div>
         <ResumeAllToast />
+        <NoAgentToast />
         <DrawingBanner />
         <ReportVisible />
         {modal === 'mission' && <MissionMap />}
@@ -280,8 +281,51 @@ function Board() {
   )
 }
 
+const INSTALL_CLAUDE = 'curl -fsSL https://claude.ai/install.sh | bash'
+
+// No coding agent on this Mac yet: offer to set up Claude Code. The command is typed into a real
+// terminal and left there, so that the person is the one who runs it.
+function NoAgentToast() {
+  const missing = useStore((s) => !s.installed.some((a) => a !== 'shell'))
+  if (!missing) return null
+  const install = async () => {
+    const s = useStore.getState()
+    const id = s.addConsole('shell', s.viewCenter())
+    for (let i = 0; i < 40 && !useStore.getState().live[id]; i++) await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 800)) // the shell's first prompt
+    await api.input(id, INSTALL_CLAUDE)
+    s.notify('The install command is ready in the terminal. Press Return to run it.')
+  }
+  const check = async () => {
+    const s = useStore.getState()
+    try {
+      const installed = await api.agents(true)
+      s.set({ installed })
+      if (!installed.some((a) => a !== 'shell')) s.notify('Still no coding agent found. Finish the install, then check again.')
+    } catch (e) {
+      s.notify(`Could not check: ${(e as Error).message}`)
+    }
+  }
+  return (
+    <div className="board-toast">
+      <span>
+        <div className="t">No coding agent found</div>
+        <div className="s">vibeboard runs the agents installed on your Mac. Claude Code takes a minute to set up.</div>
+      </span>
+      <button className="btn primary" onClick={install}>
+        Install Claude Code
+      </button>
+      <button className="btn" onClick={check}>
+        Check again
+      </button>
+    </div>
+  )
+}
+
 function EmptyBoard() {
   const s = useStore.getState()
+  const missing = useStore((st) => !st.installed.some((a) => a !== 'shell'))
+  if (missing) return null
   return (
     <div className="empty-board">
       <div>

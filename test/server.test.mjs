@@ -9,7 +9,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
-import { readTranscript } from '../server/transcript.mjs'
+import { readConversation, readTranscript } from '../server/transcript.mjs'
+import { parseAsk } from '../shared/prompts.js'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PORT = 4399
@@ -418,4 +419,53 @@ test('studios read and write files only inside the project', async () => {
   assert.equal(fs.readFileSync(path.join(root, 'src', 'b.ts'), 'utf8'), 'saved')
   const md = await (await api('GET', `/api/files/tree?root=${encodeURIComponent(root)}&only=md`)).json()
   assert.deepEqual(md.entries.map((e) => e.name), ['README.md'])
+})
+
+test('a question is only answered while it is still the one on screen', async () => {
+  const ws = await openShell('choose-1')
+  const answer = (askId, index) => api('POST', '/api/pty/choose-1/choose', { askId, index })
+  assert.equal((await answer('nothing-asked', 0)).status, 409) // no menu on screen
+
+  const menu = 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\n'
+  ws.send(JSON.stringify({ t: 'i', d: `clear; printf '${menu}'; cat >/dev/null\r` }))
+  const ask = parseAsk('Do you want to proceed?\n❯ 1. Yes\n  2. No\n')
+  assert.ok(await until(async () => (await tail('choose-1')).includes('2. No'))) // printed, before going further
+  await sleep(300)
+
+  assert.equal((await answer('another-question', 0)).status, 409)
+  assert.equal((await answer(ask.id, 9)).status, 400)
+  // A printed menu does not move with the arrows: the option cannot be confirmed, so no Enter is sent.
+  assert.equal((await answer(ask.id, 1)).status, 409)
+  assert.doesNotMatch(await tail('choose-1'), /\^\[\[B\r?\n/)
+  assert.equal((await answer(ask.id, 0)).status, 200) // the highlighted one needs no move
+  ws.close()
+  await api('DELETE', '/api/pty/choose-1')
+})
+
+test('a transcript reads as a conversation, without the bookkeeping', () => {
+  const line = (o) => JSON.stringify(o)
+  const jsonl = [
+    line({ type: 'user', message: { content: 'fix the test' } }),
+    line({ type: 'user', isMeta: true, message: { content: 'hidden meta' } }),
+    line({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+    line({ type: 'assistant', isSidechain: true, message: { content: [{ type: 'text', text: 'a helper talking' }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'text', text: 'On it.' }, { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: '/a/auth.ts' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'rm x' } }, { type: 'tool_use', id: 't3', name: 'Bash', input: { command: 'npm test' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', is_error: true, content: "The user doesn't want to proceed" }, { type: 'tool_result', tool_use_id: 't3', is_error: true, content: 'exit code 1' }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't4', name: 'Read', input: { file_path: '/a/b.ts' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }),
+    'not json',
+    line({ type: 'summary', summary: 'x' }),
+  ].join('\n')
+  assert.deepEqual(readConversation(jsonl), [
+    { kind: 'user', text: 'fix the test' },
+    { kind: 'agent', text: 'On it.' },
+    { kind: 'step', text: 'Edited auth.ts' },
+    { kind: 'step', text: 'You said no: running rm x', failed: true },
+    { kind: 'step', text: 'Failed: running npm test', failed: true },
+    { kind: 'step', text: 'Reading b.ts', pending: true },
+    { kind: 'note', text: 'Stopped here' },
+  ])
+  assert.equal(readConversation(Array(5).fill(line({ type: 'user', message: { content: 'x' } })).join('\n'), 3).length, 3)
 })

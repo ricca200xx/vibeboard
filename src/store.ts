@@ -32,6 +32,7 @@ export type ConsoleData = {
   role?: string // what this agent is for; travels with every hand-off it receives
   lead?: boolean // a Claude that can bring in helper consoles (server/helpers.mjs)
   profile?: string // account profile id: runs the CLI on that profile's own sign-in
+  view?: 'simple' | 'terminal' // what the console shows; a console saved before this existed is a terminal
   epoch: number
 }
 export type LinkKind = 'handoff' | 'review' | 'forward' | 'condition' | 'context'
@@ -67,7 +68,7 @@ export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer'
 // A second sign-in of a CLI (its own config folder on disk), so two accounts can run side by side.
 export type Profile = { id: string; name: string; agent: string }
 // `active`: the profile each CLI's new consoles start on (none: the CLI's own default sign-in).
-export type Settings = { theme?: ThemeMode; yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[]; active?: Record<string, string> }
+export type Settings = { theme?: ThemeMode; simpleView?: boolean; yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[]; active?: Record<string, string> }
 export type UsageView = 'usage' | 'tokens' | 'accounts'
 
 // Stable fallback so selectors never return a fresh [] (that re-renders forever).
@@ -100,6 +101,7 @@ type S = {
   projects: Project[]
   active: string | null
   live: Record<string, LiveSession>
+  pendingPrompt: Record<string, string> // sent from the simple view, not in the transcript yet
   installed: string[]
   loops: Loop[]
   scans: Scan[]
@@ -284,6 +286,9 @@ function fitted(nodes: Node[], gid: string) {
 // A lead brought in a helper (server/helpers.mjs), which the server already runs: it joins the
 // lead's group (last in reading order) or sits beside the lead, with a dashed line back to it.
 // Any workspace, not just the open one: the lead may be working while you look elsewhere.
+// New agents open in the simple view unless Settings says otherwise; a shell is a terminal by nature.
+const consoleView = (agent: string): ConsoleData['view'] => (agent === 'shell' || useStore.getState().settings.simpleView === false ? 'terminal' : 'simple')
+
 function addHelper(e: Extract<ServerEvent, { type: 'helper' }>) {
   const s = useStore.getState()
   const hit = findConsole(s, e.parent)
@@ -300,7 +305,7 @@ function addHelper(e: Extract<ServerEvent, { type: 'helper' }>) {
     style: { ...CONSOLE_SIZE },
     dragHandle: '.console-head',
     ...(lead.parentId ? { parentId: lead.parentId } : {}),
-    data: { agent: e.agent, name: e.name, dot: lead.data.dot, cwd: e.cwd, yolo: e.yolo, role: e.role || undefined, epoch: 0 },
+    data: { agent: e.agent, name: e.name, dot: lead.data.dot, cwd: e.cwd, yolo: e.yolo, role: e.role || undefined, view: consoleView(e.agent), epoch: 0 },
   }
   const edge: Edge = { id: `k-${e.id}`, source: lead.id, target: e.id, type: 'helper' }
   glide()
@@ -357,6 +362,7 @@ export const useStore = create<S>((set, get) => {
     active: null,
     live: {},
     installed: ['claude', 'shell'],
+    pendingPrompt: {},
     loops: [],
     scans: [],
     docJobs: [],
@@ -442,6 +448,14 @@ export const useStore = create<S>((set, get) => {
             if (e.state === 'summarizing') handing[`${e.from}>${e.to}`] = true
             else delete handing[`${e.from}>${e.to}`]
             return { handing }
+          })
+        else if (e.type === 'ask' || e.type === 'activity' || e.type === 'conversation')
+          set((s) => {
+            const cur = s.live[e.id]
+            if (!cur) return {}
+            const next =
+              e.type === 'ask' ? { ...cur, ask: e.ask } : e.type === 'activity' ? { ...cur, activity: e.text } : { ...cur, tick: (cur.tick ?? 0) + 1, started: cur.started || e.started }
+            return { live: { ...s.live, [e.id]: next } }
           })
         else if (e.type === 'subagents')
           set((s) => (s.live[e.id] ? { live: { ...s.live, [e.id]: { ...s.live[e.id], subagents: e.subagents } } } : {}))
@@ -578,6 +592,7 @@ export const useStore = create<S>((set, get) => {
           dot: DOTS[Math.floor(Math.random() * DOTS.length)],
           cwd: p.path,
           yolo: get().settings.yolo,
+          view: consoleView(agent),
           epoch: 0,
           ...(account ? { profile: account } : {}),
           ...extra,

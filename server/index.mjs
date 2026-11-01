@@ -11,7 +11,11 @@ import { WebSocketServer } from 'ws'
 import pty from 'node-pty'
 import { AGENTS, agentById } from '../shared/agents.js'
 import { createLoops } from './loops.mjs'
-import { readTranscript } from './transcript.mjs'
+import { readConversation, readTranscript } from './transcript.mjs'
+import headless from '@xterm/headless'
+import { screenOf } from './usage.mjs'
+import { isRefusal, parseAsk } from '../shared/prompts.js'
+import { describeTool } from '../shared/plain.js'
 import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
 import { createScans } from './scan.mjs'
@@ -89,7 +93,32 @@ const broadcast = (msg) => {
   for (const c of eventClients) if (c.readyState === 1) c.send(s)
 }
 
-const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, statusAt: s.statusAt, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()] })
+const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, statusAt: s.statusAt, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()], ask: s.ask, activity: s.activity, started: !!s.started })
+
+// Every console also draws into an invisible screen, so a question from the agent can be read off it
+// and offered as buttons. The agents' own menus stay the source of truth.
+const readScreen = (s) => new Promise((resolve) => s.screen.write('', () => resolve(parseAsk(screenOf(s.screen)))))
+
+function publishAsk(s, ask) {
+  if (ask?.id === s.ask?.id && ask?.selected === s.ask?.selected) return
+  const fresh = ask && ask.id !== s.ask?.id
+  s.ask = ask
+  broadcast({ type: 'ask', id: s.id, ask })
+  if (fresh) setStatus(s, 'needs')
+}
+
+// Something new is in the transcript: open conversations read it again. The hook can fire a moment
+// before the line reaches the disk.
+function touchConversation(s, started = false) {
+  clearTimeout(s.talkTimer)
+  s.talkTimer = setTimeout(() => broadcast({ type: 'conversation', id: s.id, started }), started ? 0 : 200)
+}
+
+function setActivity(s, text) {
+  if (s.activity === text) return
+  s.activity = text
+  broadcast({ type: 'activity', id: s.id, text })
+}
 
 // Claude's own sub-agents (its Task/Agent tool) appear on its console while they run. PreToolUse
 // opens one, PostToolUse closes it; only the last few finished ones are kept.
@@ -181,11 +210,26 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
     cwd: dir,
     env: { ...CLEAN_ENV, ...account, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
+  const screen = new headless.Terminal({ cols: cols || 100, rows: rows || 30, scrollback: 0, allowProposedApi: true })
+  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, screen, ask: null, activity: null, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     s.lastOutputAt = Date.now()
     for (const c of s.clients) if (c.readyState === 1) c.send(d)
+    screen.write(d)
+    // A plain shell has no questions to answer: its programs' menus are its own business.
+    if (agent.cmd) {
+      clearTimeout(s.askTimer)
+      s.askTimer = setTimeout(() => {
+        if (sessions.get(id) !== s) return
+        readScreen(s).then((ask) => {
+          // A CLI that does not redraw leaves an answered menu on screen. It only counts again
+          // once the screen has moved on and the same question comes back.
+          if (!ask) s.answered = null
+          publishAsk(s, ask?.id === s.answered ? null : ask)
+        })
+      }, 150)
+    }
     // A repaint after a resize is not activity: it would flip status and re-match output triggers.
     if (Date.now() < s.quietUntil) return
     loops.onOutput(s, d)
@@ -198,6 +242,9 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
   })
   p.onExit(({ exitCode }) => {
     clearTimeout(s.idleTimer)
+    clearTimeout(s.askTimer)
+    clearTimeout(s.talkTimer)
+    screen.dispose()
     sessions.delete(id)
     loops.onExit(s)
     helpers.forget(id)
@@ -281,6 +328,7 @@ function resize(s, cols, rows) {
   if (sessions.get(s.id) !== s) return // node-pty's resize throws on a dead pty
   s.quietUntil = Date.now() + 1000
   s.pty.resize(cols, rows)
+  s.screen.resize(cols, rows)
 }
 
 const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
@@ -382,9 +430,30 @@ const claudeProjectDirs = () => [
 
 // What the outgoing agent did. Claude's own transcript is clean text; any other CLI only has its
 // screen, so that is used with the escape codes stripped (and has no final reply to quote).
-function conversationText(s, max = 15000) {
+// The path comes from the hook's payload, so it must lie inside Claude's own folders.
+function transcriptFile(s) {
   const file = s.transcript && path.resolve(s.transcript)
-  if (file && claudeProjectDirs().some((d) => file.startsWith(d + path.sep)) && file.endsWith('.jsonl') && fs.existsSync(file)) {
+  return file && claudeProjectDirs().some((d) => file.startsWith(d + path.sep)) && file.endsWith('.jsonl') && fs.existsSync(file) ? file : null
+}
+
+// The end of a transcript, which can run to many megabytes, from the first whole line.
+function transcriptTail(file, bytes = 2 * 1024 * 1024) {
+  const fd = fs.openSync(file, 'r')
+  try {
+    const { size } = fs.fstatSync(fd)
+    const start = Math.max(0, size - bytes)
+    const buf = Buffer.alloc(size - start)
+    fs.readSync(fd, buf, 0, buf.length, start)
+    const text = buf.toString('utf8')
+    return start ? text.slice(text.indexOf('\n') + 1) : text
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function conversationText(s, max = 15000) {
+  const file = transcriptFile(s)
+  if (file) {
     const { lines, lastReply } = readTranscript(fs.readFileSync(file, 'utf8').split('\n').slice(-400).join('\n'))
     if (lines.length) return { context: lines.join('\n').slice(-max), lastReply: lastReply.slice(0, 6000) }
   }
@@ -664,7 +733,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true })
     }
     if (route === 'sessions') return json(res, 200, [...sessions.values()].map(summary))
-    if (route === 'agents') return json(res, 200, installed ?? (await detectAgents()))
+    if (route === 'agents') return json(res, 200, (!url.searchParams.has('refresh') && installed) || (await detectAgents()))
     if (route === 'hook' && req.method === 'POST') {
       const payload = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
       const s = sessions.get(id) // after the body: the console may have exited meanwhile
@@ -673,6 +742,9 @@ const server = http.createServer(async (req, res) => {
         if (payload.transcript_path) s.transcript = String(payload.transcript_path)
         if (action === 'SessionStart') s.started = true // its TUI takes input now (helpers wait for this)
         trackSubagent(s, action, payload)
+        if (action === 'PreToolUse') setActivity(s, describeTool(payload.tool_name, payload.tool_input).doing)
+        else if (action !== 'PostToolUse') setActivity(s, null)
+        touchConversation(s, action === 'SessionStart')
         if (action === 'UserPromptSubmit' || action === 'PreToolUse' || action === 'PostToolUse') setStatus(s, 'working')
         else if (action === 'Stop') {
           setStatus(s, 'done')
@@ -741,11 +813,54 @@ const server = http.createServer(async (req, res) => {
         }
         return json(res, 200, { ok: true })
       }
+      // A button pressed on a question. The screen is read again first, and again after moving to the
+      // option: a click that arrives late must never answer a different question, or pick another option.
+      if (action === 'choose') {
+        const index = Number(body.index)
+        const before = await readScreen(s)
+        if (!before || before.id !== body.askId) return json(res, 409, { error: 'the question has changed' })
+        if (!Number.isInteger(index) || !before.options[index]) return json(res, 400, { error: 'no such option' })
+        const moves = index - before.selected
+        for (let i = 0; i < Math.abs(moves); i++) {
+          writeTo(s, moves > 0 ? '\x1b[B' : '\x1b[A')
+          await sleep(60)
+        }
+        if (moves) await sleep(120)
+        const now = await readScreen(s)
+        if (!now || now.id !== body.askId || now.selected !== index) return json(res, 409, { error: 'the question has changed' })
+        writeTo(s, '\r')
+        s.answered = body.askId
+        publishAsk(s, null)
+        setStatus(s, isRefusal(before.options[index].label) ? 'idle' : 'working')
+        return json(res, 200, { ok: true })
+      }
+      // Esc interrupts an agent, but Claude fires no hook for it: look for its note in the transcript,
+      // or the console would keep saying "Running" until the 60s idle notice.
+      if (action === 'stop') {
+        writeTo(s, '\x1b')
+        if (s.agent.hooks) {
+          for (const ms of [1200, 3500]) {
+            setTimeout(() => {
+              const file = sessions.get(s.id) === s && s.status === 'working' && transcriptFile(s)
+              if (!file || readConversation(transcriptTail(file)).at(-1)?.kind !== 'note') return
+              setStatus(s, 'idle')
+              setActivity(s, null)
+              settleSubagents(s)
+              touchConversation(s)
+            }, ms)
+          }
+        }
+        return json(res, 200, { ok: true })
+      }
       if (action === 'signal' && (body.signal === 'SIGSTOP' || body.signal === 'SIGCONT')) {
         signal(s, body.signal)
         return json(res, 200, { ok: true })
       }
       if (action === 'tail') return json(res, 200, { text: s.buf.slice(-(Number(body.chars) || 8000)) })
+      if (action === 'conversation') {
+        const file = transcriptFile(s)
+        return json(res, 200, { items: file ? readConversation(transcriptTail(file)) : [] })
+      }
     }
     if (route === 'ls') {
       const dir = url.searchParams.get('path') || os.homedir()

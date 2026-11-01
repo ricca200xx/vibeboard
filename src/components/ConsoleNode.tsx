@@ -10,6 +10,7 @@ import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 import { initials } from './UsagePanel'
 import { currentTheme, useTheme, type Theme } from '../theme'
+import { Conversation, SimpleFooter, StatusStrip } from './SimpleView'
 
 const DARK = {
   background: '#161617',
@@ -304,6 +305,9 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   const account = data.profile ? profiles.find((p) => p.id === data.profile) : undefined
   const status: ConsoleStatus = !live ? 'stopped' : live.paused ? 'paused' : live.status
   const color = agentColor(data.agent)
+  const simple = data.view === 'simple' && data.agent !== 'shell'
+  // Only Claude's transcript can be read as a conversation; other agents keep their terminal in view.
+  const chat = simple && data.agent === 'claude'
 
   useEffect(() => setExited(false), [data.epoch])
 
@@ -367,6 +371,16 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
             </span>
           )}
           <span className="spacer" />
+          {data.agent !== 'shell' && (
+            <div className="seg view-switch nodrag" title="Simple shows a conversation. Terminal shows the real thing underneath.">
+              <button className={simple ? 'on' : ''} onClick={() => updateData(id, { view: 'simple' })}>
+                Simple
+              </button>
+              <button className={simple ? '' : 'on'} onClick={() => updateData(id, { view: 'terminal' })}>
+                Terminal
+              </button>
+            </div>
+          )}
           <StatusPill status={status} />
           <button className="icon-btn sm nodrag" title="Pass this agent's work to another one" onClick={() => setHandMenu((v) => !v)}>
             <Forward size={15} />
@@ -424,8 +438,19 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
 
         {data.resumeOffer && data.lastSessionId && <ResumeOffer id={id} sessionId={data.lastSessionId} />}
 
+        {simple && !chat && <StatusStrip id={id} status={status} />}
+
         <div className="console-body nodrag nowheel nopan">
           <TerminalView id={id} epoch={data.epoch} onExit={() => setExited(true)} />
+          {/* Laid over the terminal, never beside it: resizing a terminal makes the CLI redraw, and a
+              question that opens and closes with each redraw would resize it again, forever. */}
+          {chat && (
+            <div className="simple-layer">
+              <StatusStrip id={id} status={status} />
+              <Conversation id={id} name={data.name} />
+              {live && <SimpleFooter id={id} data={data} status={status} />}
+            </div>
+          )}
           {exited && (
             <div className="console-overlay">
               <div className="box">
@@ -437,6 +462,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
             </div>
           )}
         </div>
+        {simple && !chat && live && <SimpleFooter id={id} data={data} status={status} />}
       </div>
       <SubagentTray id={id} />
     </>
