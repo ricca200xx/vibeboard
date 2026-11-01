@@ -14,6 +14,7 @@ import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type Di
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
+import type { ThemeMode } from './theme'
 
 export { CONSOLE_SIZE, freeSpot }
 
@@ -66,7 +67,7 @@ export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer'
 // A second sign-in of a CLI (its own config folder on disk), so two accounts can run side by side.
 export type Profile = { id: string; name: string; agent: string }
 // `active`: the profile each CLI's new consoles start on (none: the CLI's own default sign-in).
-export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[]; active?: Record<string, string> }
+export type Settings = { theme?: ThemeMode; yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[]; active?: Record<string, string> }
 export type UsageView = 'usage' | 'tokens' | 'accounts'
 
 // Stable fallback so selectors never return a fresh [] (that re-renders forever).

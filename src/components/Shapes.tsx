@@ -3,8 +3,9 @@ import { BaseEdge, EdgeLabelRenderer, Handle, NodeResizer, Position, useInternal
 import { ArrowRight, Circle, Diamond, Minus, Square, StickyNote } from 'lucide-react'
 import { useStore, type ShapeData, type ShapeKind } from '../store'
 import { PAPER } from './Nodes'
+import { THEME_INK, themed } from '../theme'
 
-export const SHAPE_DEFAULTS: Omit<ShapeData, 'kind'> = { stroke: '#ece8e2', fill: 'none', strokeWidth: 2, dash: 'solid', round: true, opacity: 1, text: '' }
+export const SHAPE_DEFAULTS: Omit<ShapeData, 'kind'> = { stroke: THEME_INK, fill: 'none', strokeWidth: 2, dash: 'solid', round: true, opacity: 1, text: '' }
 const isLine = (k: ShapeKind) => k === 'line' || k === 'arrow'
 const nid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 8)}`
 
@@ -13,7 +14,7 @@ function ShapeNodeImpl({ id, data, selected, width = 160, height = 100 }: NodePr
   const sw = data.strokeWidth
   const dash = data.dash === 'dashed' ? `${sw * 4} ${sw * 3}` : data.dash === 'dotted' ? `0 ${sw * 2.6}` : undefined
   const paint = {
-    stroke: data.stroke,
+    stroke: themed(data.stroke),
     strokeWidth: sw,
     strokeDasharray: dash,
     strokeLinecap: 'round' as const,
@@ -54,7 +55,7 @@ function ShapeNodeImpl({ id, data, selected, width = 160, height = 100 }: NodePr
               className="nodrag nowheel label"
               autoFocus
               defaultValue={data.text}
-              style={{ color: data.stroke }}
+              style={{ color: themed(data.stroke) }}
               onBlur={(e) => {
                 useStore.getState().updateData(id, { text: e.target.value })
                 setEditing(false)
@@ -63,7 +64,7 @@ function ShapeNodeImpl({ id, data, selected, width = 160, height = 100 }: NodePr
             />
           ) : (
             (data.text || data.sub) && (
-              <div className="label" style={{ color: data.stroke }}>
+              <div className="label" style={{ color: themed(data.stroke) }}>
                 <span>
                   {data.text}
                   {data.sub && <small>{data.sub}</small>}

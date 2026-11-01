@@ -201,7 +201,7 @@ function RadialMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
 }
 
 function Panel({ at, title, onBack, children, width = 280 }: { at: MenuAt; title: string; onBack?: () => void; children: React.ReactNode; width?: number }) {
-  const pos = usePanelPos(at, width, 380)
+  const pos = usePanelPos(at, width, 440)
   return (
     <div className="ctx-panel nowheel" style={{ ...pos, width }}>
       <div className="ctx-head">

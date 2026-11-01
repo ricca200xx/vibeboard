@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Folder, FolderGit2, Plus, Search, X } from 'lucide-react'
+import { ArrowLeft, Folder, FolderGit2, FolderOpen, Plus, Search, X } from 'lucide-react'
 import { api } from '../api'
 import { consoles, useStore } from '../store'
 import { Spark } from './icons'
@@ -15,13 +15,13 @@ export function Home() {
       <div className="home-inner">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-            <Spark size={30} color="#f0553a" />
-            <span style={{ fontWeight: 600, fontSize: 18 }}>vibeboard</span>
+            <Spark size={26} color="var(--accent)" />
+            <span style={{ fontWeight: 600, fontSize: 15 }}>vibeboard</span>
           </div>
           <h1>
-            One board for <em>your agents</em>.
+            One board for your agents.
           </h1>
-          <div className="lead">Open a folder and it becomes a board of real terminals.</div>
+          <div className="lead">Open a project folder and your coding agents work side by side.</div>
         </div>
 
         {recent.length > 0 && (
@@ -67,8 +67,19 @@ export function Home() {
           </div>
         )}
 
-        <FolderBrowser onPick={openProject} />
+        {window.vibeboardDesktop ? <NativePicker onPick={openProject} /> : <FolderBrowser onPick={openProject} />}
       </div>
+    </div>
+  )
+}
+
+// In the desktop app the Mac's own folder window does the browsing.
+function NativePicker({ onPick }: { onPick: (path: string) => void }) {
+  return (
+    <div>
+      <button className="btn primary" onClick={() => window.vibeboardDesktop!.pickFolder().then((p) => p && onPick(p))}>
+        <FolderOpen size={15} /> Open a folder…
+      </button>
     </div>
   )
 }

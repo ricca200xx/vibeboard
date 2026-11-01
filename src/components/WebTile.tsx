@@ -7,7 +7,7 @@ import { toUrl } from '../../shared/url.js'
 
 const uid = () => crypto.randomUUID().slice(0, 8)
 // Present only inside the desktop app (desktop/preload.cjs).
-const desktop = (window as unknown as { vibeboardDesktop?: { inspect: (x: number, y: number) => void } }).vibeboardDesktop
+const desktop = window.vibeboardDesktop
 // Page sizes: the page is laid out at that size and scaled down to the tile.
 const VIEWPORTS: [string, string][] = [
   ['Fit', 'Fit the tile'],

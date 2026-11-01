@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Briefcase, ChevronDown, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
+import { Briefcase, ChevronDown, ChevronLeft, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
 import { consoles, project, useStore } from '../store'
 import { ClaudeMark } from './icons'
 import { fmtTokens, loadLimits, loadTokens, useUsage } from './UsagePanel'
@@ -37,7 +37,7 @@ export function TopBar() {
   return (
     <div className="topbar">
       <button className="pill" title="Back to your projects: agents keep running" onClick={s.goHome}>
-        <ArrowLeft size={16} /> Back to home
+        <ChevronLeft size={16} /> Home
       </button>
 
       <div className="pill tabs" style={{ position: 'relative' }}>
@@ -82,7 +82,7 @@ export function TopBar() {
         </button>
 
         {projMenu && (
-          <div className="menu" style={{ top: 46, left: 0, width: 300 }} onMouseLeave={() => setProjMenu(false)}>
+          <div className="menu" style={{ top: 38, left: 0, width: 300 }} onMouseLeave={() => setProjMenu(false)}>
             <div className="menu-title">Projects</div>
             {projects.map((x) => (
               <button
@@ -95,7 +95,7 @@ export function TopBar() {
               >
                 <Folder size={16} color="var(--muted)" />
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <div className="title" style={{ fontSize: 14 }}>
+                  <div className="title">
                     {x.name}
                   </div>
                   <div className="sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -105,30 +105,28 @@ export function TopBar() {
               </button>
             ))}
             <button className="menu-item" onClick={s.goHome}>
-              <FolderOpen size={16} color="var(--accent)" />
-              <span className="title" style={{ fontSize: 14 }}>
-                Open another folder…
-              </span>
+              <FolderOpen size={16} color="var(--muted)" />
+              <span className="title">Open another folder…</span>
+            </button>
+            <button className="menu-item" onClick={s.closeProject}>
+              <X size={16} color="var(--muted)" />
+              <span className="title">Close this project</span>
             </button>
           </div>
         )}
       </div>
 
-      <button className="pill" title="Close this project" onClick={s.closeProject}>
-        <X size={15} /> Close
-      </button>
-
       <span className="spacer" />
 
       <span className="pill" title="Agents running right now">
-        <span className="dot" style={{ background: 'var(--live)', width: 7, height: 7 }} /> {live} <span className="muted">live</span>
+        <span className="dot" style={{ background: 'var(--live)', width: 7, height: 7 }} /> {live} <span className="muted">running</span>
       </span>
       <button className="pill usage-pill" title="How much of your plan you have used" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
         <Info size={15} color="var(--muted)" />
         <ClaudeMark size={14} />
         {resets ? (
           <>
-            <span className="muted">resets</span> <span className="mono">{resets}</span>
+            <span className="muted">resets</span> {resets}
           </>
         ) : (
           <>
@@ -142,7 +140,6 @@ export function TopBar() {
       <button className="icon-btn" title="Settings" onClick={() => s.set({ modal: 'settings' })}>
         <Settings size={17} />
       </button>
-      <span className="avatar" />
     </div>
   )
 }

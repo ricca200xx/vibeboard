@@ -20,11 +20,21 @@ export function SettingsModal() {
             <h2>Settings</h2>
             <div className="sub">Stored on your disk in ~/.vibeboard</div>
           </div>
-          <button className="icon-btn" onClick={close}>
+          <button className="icon-btn" title="Close" onClick={close}>
             <X size={18} />
           </button>
         </div>
         <div className="loops">
+          <div style={{ display: 'grid', gap: 10 }}>
+            <div className="section-label">Appearance</div>
+            <div className="pills">
+              {(['system', 'light', 'dark'] as const).map((m) => (
+                <button key={m} className={(settings.theme ?? 'system') === m ? 'on' : ''} onClick={() => patch({ theme: m })}>
+                  {{ system: 'Same as my Mac', light: 'Light', dark: 'Dark' }[m]}
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: 'grid', gap: 10 }}>
             <div className="section-label">Default agent</div>
             <div className="pills">
@@ -38,8 +48,8 @@ export function SettingsModal() {
           <div className="toggle-row">
             <button className={`toggle ${settings.yolo ? 'on' : ''}`} onClick={() => patch({ yolo: !settings.yolo })} />
             <span>
-              New consoles skip permission prompts (YOLO)
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>Claude runs with --dangerously-skip-permissions. Only on repos you trust.</div>
+              New agents do not ask before acting (Auto-approve)
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>Claude runs with --dangerously-skip-permissions. Only on projects you trust.</div>
             </span>
           </div>
           <div className="toggle-row">
@@ -52,21 +62,21 @@ export function SettingsModal() {
             />
             <span>
               Notify me when an agent needs me or finishes
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>Only while you are in another window. Click the notification to jump to the console.</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>Only while you are in another window. Click the notification to jump to the agent.</div>
             </span>
           </div>
           <div className="toggle-row">
             <button className={`toggle ${settings.speak !== false ? 'on' : ''}`} onClick={() => patch({ speak: settings.speak === false })} />
             <span>
               Speak planner replies after a voice command
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>Uses the system voice. Note: browser dictation may send audio to its vendor.</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>Uses the system voice. Note: browser dictation may send audio to its vendor.</div>
             </span>
           </div>
           <div className="toggle-row">
-            <CircleUserRound size={20} color="var(--muted)" style={{ margin: '0 12px' }} />
+            <CircleUserRound size={20} color="var(--muted)" style={{ margin: '0 7px' }} />
             <span style={{ flex: 1 }}>
               Accounts
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>
                 {settings.profiles?.length ? `${settings.profiles.length} extra sign-in${settings.profiles.length > 1 ? 's' : ''}` : 'Run a second sign-in of Claude or Codex side by side'}
               </div>
             </span>

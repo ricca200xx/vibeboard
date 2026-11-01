@@ -61,6 +61,7 @@ import { MissionMap } from './MissionMap'
 import { LoopsModal } from './LoopsModal'
 import { MemoryCard, MemoryModal } from './MemoryModal'
 import { SettingsModal } from './Panels'
+import { themed } from '../theme'
 import { UsagePanel } from './UsagePanel'
 
 const nodeTypes = {
@@ -140,9 +141,9 @@ function Board() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (t.closest('input, textarea, [contenteditable], .xterm')) return
       const s = useStore.getState()
-      if (e.key === 'Escape') s.set({ tool: 'select', modal: null, connecting: null })
+      if (e.key === 'Escape' && !t.closest('.xterm')) s.set({ tool: 'select', modal: null, connecting: null })
+      if (t.closest('input, textarea, [contenteditable], .xterm')) return
       if (e.key === 'Backspace' || e.key === 'Delete') {
         workspace(s)
           ?.nodes.filter((n) => n.selected && n.type !== 'console')
@@ -236,7 +237,7 @@ function Board() {
           const s = useStore.getState()
           if (!s.connectConsoles(c.source, c.target)) return
           const fromCard = ws.nodes.some((n) => n.id === c.source && n.type === 'memory')
-          s.notify(fromCard ? 'Wired: Push on the card types the memory into this console' : 'Linked: work passes along whenever the first one finishes')
+          s.notify(fromCard ? 'Connected: Push on the card types the memory into this console' : 'Linked: work passes along whenever the first one finishes')
         }}
         isValidConnection={(c) => c.source !== c.target}
         defaultViewport={ws.viewport ?? { x: 120, y: 80, zoom: 0.9 }}
@@ -271,9 +272,30 @@ function Board() {
         className={tool !== 'select' ? 'placing' : ''}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={34} size={1.7} color="#38342f" />
+        <Background variant={BackgroundVariant.Dots} gap={34} size={1.3} color="var(--grid)" />
       </ReactFlow>
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} />}
+      {!ws.nodes.length && <EmptyBoard />}
+    </div>
+  )
+}
+
+function EmptyBoard() {
+  const s = useStore.getState()
+  return (
+    <div className="empty-board">
+      <div>
+        <h2>Start with an agent</h2>
+        <p>Give it a job and watch it work. Right-click anywhere on the board for more.</p>
+        <div className="row">
+          <button className="btn primary" onClick={() => s.addConsole(s.settings.defaultAgent, s.viewCenter())}>
+            New agent
+          </button>
+          <button className="btn" onClick={() => s.set({ modal: 'presets' })}>
+            Ready-made team
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -368,7 +390,7 @@ function InkPanel() {
       <div className="section-label">Color</div>
       <div className="row">
         {INK_COLORS.map((c) => (
-          <button key={c} className={`swatch ${color === c ? 'on' : ''}`} style={{ background: c }} title={c} onClick={() => set({ inkColor: c })} />
+          <button key={c} className={`swatch ${color === c ? 'on' : ''}`} style={{ background: themed(c) }} title={c} onClick={() => set({ inkColor: c })} />
         ))}
         <label className={`swatch custom ${custom ? 'on' : ''}`} style={custom ? { background: color } : undefined} title="Custom color">
           <Pipette size={11} />
@@ -564,7 +586,7 @@ function InkLayer() {
         setPts(null)
       }}
     >
-      {pts && <path d={toD(pts)} fill="none" stroke={color} strokeWidth={width * flow.getZoom()} strokeLinecap="round" strokeLinejoin="round" />}
+      {pts && <path d={toD(pts)} fill="none" stroke={themed(color)} strokeWidth={width * flow.getZoom()} strokeLinecap="round" strokeLinejoin="round" />}
     </svg>
   )
 }

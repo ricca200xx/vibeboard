@@ -1,8 +1,8 @@
-import '@fontsource-variable/geist'
 import '@fontsource-variable/jetbrains-mono'
 import '@xyflow/react/dist/style.css'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
+import './theme'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
 

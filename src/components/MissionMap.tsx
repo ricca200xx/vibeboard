@@ -106,7 +106,7 @@ export function MissionMap() {
     return `M${x1} ${y1} C${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`
   }
   const wire = (key: string, d: string, dashed: boolean, faded = false) => (
-    <path key={key} d={d} stroke={dashed ? '#8a847c' : '#6b8f5e'} strokeDasharray={dashed ? '4 4' : undefined} strokeWidth={1.3} fill="none" opacity={faded ? 0.18 : dashed ? 0.7 : 0.85} />
+    <path key={key} d={d} stroke={dashed ? 'var(--muted)' : 'var(--edge)'} strokeDasharray={dashed ? '4 4' : undefined} strokeWidth={1.3} fill="none" opacity={faded ? 0.18 : dashed ? 0.7 : 0.85} />
   )
 
   const jump = (ids: string[]) => {
@@ -334,7 +334,7 @@ export function MissionMap() {
                 <div className="mm-hint">
                   {pickedSection.kind === 'orch'
                     ? "Command these agents from the orchestrator's own composer, or wire more with Connect."
-                    : 'Not wired to any orchestrator: the command bar reaches them one by one. Wire them to an orchestrator to command them together.'}
+                    : 'Not connected to any orchestrator: the command bar reaches them one by one. Connect them to an orchestrator to command them together.'}
                 </div>
               </>
             ) : (
@@ -386,7 +386,7 @@ function SectionRow({ section, note, onPick }: { section: Section; note?: string
       {section.kind === 'orch' ? <span className="orb sm" /> : <Command size={15} color="var(--muted)" />}
       <span style={{ flex: 1 }}>
         <div className="t">{section.label}</div>
-        <div className="s">{note ?? (section.kind === 'orch' ? plural(agentsOf(section).length, 'agent') : 'Not wired to any orchestrator')}</div>
+        <div className="s">{note ?? (section.kind === 'orch' ? plural(agentsOf(section).length, 'agent') : 'Not connected to any orchestrator')}</div>
       </span>
       <ChevronRight size={15} color="var(--faint)" />
     </button>
@@ -495,7 +495,7 @@ function ConsoleDetail(props: {
         {section && (
           <SectionRow
             section={section}
-            note={section.kind === 'orch' ? (team ? 'Through the team' : 'Wired directly') : undefined}
+            note={section.kind === 'orch' ? (team ? 'Through the team' : 'Connected directly') : undefined}
             onPick={() => props.onSection(section.id)}
           />
         )}

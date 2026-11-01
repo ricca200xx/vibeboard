@@ -4,6 +4,7 @@ import { Users, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { WirePick } from './ConsoleNode'
 import { useStore, workspace, type GroupData, type InkData, type NoteData, type TextData } from '../store'
+import { themed } from '../theme'
 
 // Paper for sticky notes: warm, a little worn, light text on top.
 export const PAPER = ['#c99a35', '#d9733a', '#c94a4f', '#4f9a66', '#3a9690', '#4a6fcf', '#7d5cd6', '#3b3833']
@@ -92,7 +93,7 @@ function TextNodeImpl({ id, data }: NodeProps<Node<TextData>>) {
   return (
     <div
       className="text-node"
-      style={{ color: data.color, fontFamily: FONTS[data.font ?? 'Mono'], fontSize: SIZES[data.size ?? 'M'], textAlign: data.align, opacity: data.opacity }}
+      style={{ color: data.color && themed(data.color), fontFamily: FONTS[data.font ?? 'Mono'], fontSize: SIZES[data.size ?? 'M'], textAlign: data.align, opacity: data.opacity }}
       onDoubleClick={() => setEditing(true)}
     >
       {editing ? (
@@ -134,7 +135,7 @@ function InkNodeImpl({ data, width, height }: NodeProps<Node<InkData>>) {
     <div className="ink-node">
       <svg width={width ?? 10} height={height ?? 10}>
         {data.paths.map((d, i) => (
-          <path key={i} d={d} fill="none" stroke={data.color} strokeWidth={data.width ?? 3} strokeLinecap="round" strokeLinejoin="round" />
+          <path key={i} d={d} fill="none" stroke={themed(data.color)} strokeWidth={data.width ?? 3} strokeLinecap="round" strokeLinejoin="round" />
         ))}
       </svg>
     </div>

@@ -9,14 +9,15 @@ import { absolute, agentColor, consoles, launchCache, useStore, workspace, type 
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 import { initials } from './UsagePanel'
+import { currentTheme, useTheme, type Theme } from '../theme'
 
-const THEME = {
-  background: '#151413',
-  foreground: '#e6e1da',
+const DARK = {
+  background: '#161617',
+  foreground: '#e8e8ed',
   cursor: '#f0553a',
-  cursorAccent: '#151413',
+  cursorAccent: '#161617',
   selectionBackground: 'rgba(240, 85, 58, 0.32)',
-  black: '#1d1b19',
+  black: '#1d1d1f',
   red: '#ff6b5b',
   green: '#62d48a',
   yellow: '#f5c560',
@@ -33,6 +34,31 @@ const THEME = {
   brightCyan: '#8ce6e6',
   brightWhite: '#ffffff',
 }
+const LIGHT = {
+  background: '#ffffff',
+  foreground: '#1d1d1f',
+  cursor: '#d6421f',
+  cursorAccent: '#ffffff',
+  selectionBackground: 'rgba(214, 66, 31, 0.2)',
+  black: '#1d1d1f',
+  red: '#c4261a',
+  green: '#1a7f37',
+  yellow: '#8a5a00',
+  blue: '#0a5fd6',
+  magenta: '#8f3fc4',
+  cyan: '#0f7c8a',
+  white: '#6e6e73',
+  brightBlack: '#6e6e73',
+  brightRed: '#d12f1b',
+  brightGreen: '#228b45',
+  brightYellow: '#a86a00',
+  brightBlue: '#2f76e0',
+  brightMagenta: '#a24fd6',
+  brightCyan: '#14899a',
+  brightWhite: '#3a3a3c',
+}
+// Agent CLIs choose their own colours, often for a dark screen: on white xterm darkens any that are too faint.
+const terminalLook = (theme: Theme) => (theme === 'light' ? { theme: LIGHT, minimumContrastRatio: 4.5 } : { theme: DARK, minimumContrastRatio: 1 })
 
 export type ConsoleStatus = 'idle' | 'working' | 'needs' | 'done' | 'paused' | 'stopped'
 
@@ -80,6 +106,7 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
   const ref = useRef<HTMLDivElement>(null)
   const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null)
   const fontSize = useStore((s) => s.settings.fontSize)
+  const theme = useTheme()
 
   useEffect(() => {
     const el = ref.current!
@@ -94,7 +121,7 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       lineHeight: 1.22,
       cursorBlink: true,
       scrollback: 10000,
-      theme: THEME,
+      ...terminalLook(currentTheme()),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -138,6 +165,12 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
     t.term.options.fontSize = fontSize
     if (t.term.element) t.fit.fit()
   }, [fontSize])
+
+  // The theme changes in place too.
+  useEffect(() => {
+    const t = termRef.current
+    if (t) Object.assign(t.term.options, terminalLook(theme))
+  }, [theme])
 
   // ponytail: xterm ignores the board's CSS scale, so mouse selection is offset when zoom != 100%.
   // Keyboard is unaffected; double-click the header to snap the console to 100%.
@@ -254,7 +287,7 @@ export function WirePick({ id }: { id: string }) {
   if (!orch) return null
   return (
     <button className={`wire-pick nodrag ${wired ? 'on' : ''}`} onClick={() => useStore.getState().toggleWire(orch, id)}>
-      <span>{wired ? 'Wired · click to remove' : 'Click to wire'}</span>
+      <span>{wired ? 'Connected · click to remove' : 'Click to connect'}</span>
     </button>
   )
 }
@@ -287,7 +320,7 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
       <NodeResizer isVisible={selected} minWidth={380} minHeight={220} />
       <Handle type="target" position={Position.Left} className="wire-handle" />
       <Handle type="source" position={Position.Right} className="wire-handle" title="Drag onto another console: it takes over whenever this one finishes" />
-      <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 42%, #2a2724)` }}>
+      <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 42%, var(--panel-3))` }}>
         <WirePick id={id} />
         <div className="console-head" onDoubleClick={snapTo100}>
           <button className="agent-switch nodrag" onClick={() => setAgentMenu((v) => !v)} title={agentById(data.agent)?.name}>
@@ -329,22 +362,22 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
           )}
           {data.role && <span className="role">{data.role}</span>}
           {data.yolo && (
-            <span className="badge" style={{ color: 'var(--accent)' }}>
-              yolo
+            <span className="badge" style={{ color: 'var(--accent)' }} title="This agent acts without asking first. Use it only on projects you trust.">
+              Auto-approve
             </span>
           )}
           <span className="spacer" />
           <StatusPill status={status} />
-          <button className="icon-btn sm nodrag" title="Hand off this agent's work" onClick={() => setHandMenu((v) => !v)}>
+          <button className="icon-btn sm nodrag" title="Pass this agent's work to another one" onClick={() => setHandMenu((v) => !v)}>
             <Forward size={15} />
           </button>
-          <button className="icon-btn sm nodrag" title="Restart" onClick={() => restartConsole(id)}>
+          <button className="icon-btn sm nodrag" title="Stop it and start it again" onClick={() => restartConsole(id)}>
             <RotateCw size={14} />
           </button>
           <button className="icon-btn sm nodrag" title="Duplicate" onClick={() => duplicateConsole(id)}>
             <Copy size={14} />
           </button>
-          <button className="icon-btn sm nodrag" title="Close" onClick={() => setConfirmClose(true)}>
+          <button className="icon-btn sm nodrag" title="Stop it and remove it" onClick={() => setConfirmClose(true)}>
             <X size={15} />
           </button>
         </div>

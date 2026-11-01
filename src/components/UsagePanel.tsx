@@ -234,7 +234,7 @@ function Ring({ pct }: { pct: number }) {
   const C = 2 * Math.PI * R
   return (
     <svg className="ring" viewBox="0 0 86 86">
-      <circle cx="43" cy="43" r={R} fill="none" stroke="#2a2724" strokeWidth="6" />
+      <circle cx="43" cy="43" r={R} fill="none" stroke="var(--panel-3)" strokeWidth="6" />
       {pct > 0 && <circle cx="43" cy="43" r={R} fill="none" stroke="var(--accent)" strokeWidth="6" strokeLinecap="round" strokeDasharray={`${(C * Math.min(100, pct)) / 100} ${C}`} transform="rotate(-90 43 43)" />}
       <text x="43" y="45" textAnchor="middle" fill="var(--text)" fontSize="17" fontWeight="600">
         {Math.round(pct)}%

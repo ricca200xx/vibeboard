@@ -2,7 +2,7 @@
 // Electron rebuild), then shows the board in a real window. Web tiles become real browsers here:
 // pages that refuse to be framed (Google, GitHub…) load, because the window strips the headers that
 // forbid framing, for frames only.
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell } = require('electron')
 const { spawn } = require('node:child_process')
 const http = require('node:http')
 const path = require('node:path')
@@ -59,7 +59,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: 'vibeboard',
-    backgroundColor: '#121110',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#161617' : '#f5f5f7',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
     show: !process.env.VIBEBOARD_DESKTOP_HIDDEN, // tests drive a hidden window over CDP
@@ -80,6 +80,17 @@ function createWindow() {
 
 ipcMain.on('inspect', (e, x, y) => {
   e.sender.inspectElement(Math.round(Number(x) || 0), Math.round(Number(y) || 0))
+})
+
+// The traffic lights and native dialogs follow the theme chosen in Settings.
+ipcMain.on('theme', (_e, mode) => {
+  if (['system', 'light', 'dark'].includes(mode)) nativeTheme.themeSource = mode
+})
+
+ipcMain.handle('pick-folder', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] })
+  return canceled ? null : filePaths[0]
 })
 
 app.setName('vibeboard')

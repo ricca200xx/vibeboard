@@ -60,7 +60,7 @@ export function AgentIcon({ id, size = 34 }: { id: string; size?: number }) {
       style={{
         width: size,
         height: size,
-        background: `color-mix(in srgb, ${color} 16%, #1d1b19)`,
+        background: `color-mix(in srgb, ${color} 16%, var(--panel-2))`,
         border: `1px solid color-mix(in srgb, ${color} 35%, transparent)`,
       }}
     >

@@ -6,16 +6,6 @@ import { AgentGlyph, AgentIcon } from './icons'
 import { command, mentionTargets } from '../planner'
 import { TEAMS } from '../teams'
 
-const CHIPS = {
-  new: ['#3ecfb2', '#f472b6'],
-  spawn: ['#7fd36b', '#f0553a'],
-  group: ['#d9c34a', '#8a7a3a'],
-  presets: ['#f5a33d', '#5b8cff'],
-  pause: ['#f0553a', '#5b8cff'],
-  resume: ['#f472b6', '#3ecf8e'],
-  memory: ['#a477ff', '#f5d547'],
-}
-
 const ROLES: [string, string][] = [
   ['Frontend', '#f5a33d'],
   ['Backend', '#a477ff'],
@@ -28,10 +18,9 @@ const ROLES: [string, string][] = [
 ]
 const FILL = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'shell', 'aider', 'cursor', 'qwen', 'copilot']
 
-function Chip({ k, label, hint, onClick, on }: { k: keyof typeof CHIPS; label: string; hint: string; onClick: () => void; on?: boolean }) {
-  const [a, b] = CHIPS[k]
+function Chip({ label, hint, onClick, on }: { label: string; hint: string; onClick: () => void; on?: boolean }) {
   return (
-    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} title={hint} onClick={onClick}>
+    <button className={`chip ${on ? 'on' : ''}`} title={hint} onClick={onClick}>
       {label}
     </button>
   )
@@ -49,10 +38,9 @@ export function BottomBar() {
         {composer && <Composer onClose={() => setComposer(false)} />}
         {modal === 'presets' && <Presets />}
         <div className="chips">
-          <Chip k="new" label="New console" hint="Start one more agent" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
-          <Chip k="spawn" label="4 agents" hint="Start four agents at once" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
+          <Chip label="New agent" hint="Start one more agent" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
+          <Chip label="4 agents" hint="Start four agents at once" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
           <Chip
-            k="group"
             label="Group"
             hint="Put the selected agents in a group, or start a new group"
             on={composer}
@@ -62,10 +50,10 @@ export function BottomBar() {
               else setComposer((v) => !v)
             }}
           />
-          <Chip k="presets" label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
-          <Chip k="pause" label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
-          <Chip k="resume" label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
-          <Chip k="memory" label="Memory" hint="Notes about this project to give to your agents" onClick={() => s.set({ modal: 'memory' })} />
+          <Chip label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
+          <Chip label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
+          <Chip label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
+          <Chip label="Memory" hint="Notes about this project to give to your agents" onClick={() => s.set({ modal: 'memory' })} />
         </div>
       </div>
       <CommandBar />
@@ -149,7 +137,7 @@ export function Composer({ onClose, onBack, at }: { onClose: () => void; onBack?
             onClose()
           }}
         >
-          Spawn {slots.length}
+          Start {slots.length} agent{slots.length === 1 ? '' : 's'}
         </button>
       </div>
     </div>
@@ -391,7 +379,7 @@ function CommandBar() {
         <input
           ref={inputRef}
           value={text}
-          placeholder={busy ? 'Planning…' : 'Hold space to speak · @ to direct...'}
+          placeholder={busy ? 'Planning…' : 'Ask your agents · @ to pick one · hold space to talk'}
           onChange={(e) => {
             setText(e.target.value)
             const m = e.target.value.slice(0, e.target.selectionStart ?? undefined).match(/@([^@\n]*)$/)
