@@ -37,7 +37,12 @@ export function TopBar() {
 
   // However many workspaces there are, the current one is in view.
   useEffect(() => {
-    document.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    const keep = () => document.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    keep()
+    // The space for the tabs changes as the pills on the right fill in.
+    const watcher = new ResizeObserver(keep)
+    watcher.observe(document.querySelector('.tab-list')!)
+    return () => watcher.disconnect()
   }, [p.activeWs, p.workspaces.length])
 
   return (
