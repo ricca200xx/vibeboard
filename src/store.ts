@@ -102,6 +102,8 @@ type S = {
   active: string | null
   live: Record<string, LiveSession>
   pendingPrompt: Record<string, string> // sent from the simple view, not in the transcript yet
+  linkDown: boolean // the page has lost the server and is trying to get it back
+  exits: Record<string, number> // how each console's process last ended
   installed: string[]
   loops: Loop[]
   scans: Scan[]
@@ -363,6 +365,8 @@ export const useStore = create<S>((set, get) => {
     live: {},
     installed: ['claude', 'shell'],
     pendingPrompt: {},
+    linkDown: false,
+    exits: {},
     loops: [],
     scans: [],
     docJobs: [],
@@ -389,8 +393,11 @@ export const useStore = create<S>((set, get) => {
         api
           .getState()
           .then((saved) => {
-            set({ ...(saved as Partial<S>), loaded: true })
+            const { recovered, ...state } = saved as Partial<S> & { recovered?: string }
+            set({ ...state, loaded: true })
             set((s) => ({ ready: s.liveReady }))
+            if (recovered === 'backup') get().notify('Your board file was damaged. It is back as it was at the last backup.')
+            if (recovered === 'empty') get().notify('Your board file was damaged, so this is a fresh board. The old file is kept in ~/.vibeboard.')
           })
           .catch(() => setTimeout(load, 1000))
       load()
@@ -415,6 +422,7 @@ export const useStore = create<S>((set, get) => {
             if (e.status === 'done') autoHandoff(e.id)
           }
         } else if (e.type === 'exit') {
+          set((s) => ({ exits: { ...s.exits, [e.id]: e.code } }))
           forgetLaunch((id) => id !== e.id)
           set((s) => {
             const live = { ...s.live }
@@ -460,7 +468,7 @@ export const useStore = create<S>((set, get) => {
         else if (e.type === 'subagents')
           set((s) => (s.live[e.id] ? { live: { ...s.live, [e.id]: { ...s.live[e.id], subagents: e.subagents } } } : {}))
         else if (e.type === 'helper') addHelper(e)
-      })
+      }, (up) => set({ linkDown: !up }))
     },
 
     set: (patch) => set(patch),
@@ -884,14 +892,21 @@ const snapshot = () => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let saving = false
 let dirty = false
+let saveFailures = 0
+const MAX_SAVE_RETRY_MS = 30_000
+const SAVE_FAILURES_BEFORE_TELLING = 3
 async function save() {
   saveTimer = undefined
   if (saving) return void (dirty = true)
   saving = true
   try {
     await api.putState(snapshot())
+    saveFailures = 0
   } catch (e) {
-    useStore.getState().notify(`Save failed: ${(e as Error).message}`)
+    // Nothing is lost while the page stays open: the board goes on trying, and says so only if it lasts.
+    saveFailures++
+    if (saveFailures === SAVE_FAILURES_BEFORE_TELLING) useStore.getState().notify(`Your board could not be saved: ${(e as Error).message}. Still trying.`)
+    saveTimer = setTimeout(save, Math.min(MAX_SAVE_RETRY_MS, 1000 * 2 ** saveFailures))
   } finally {
     saving = false
     if (dirty) {
@@ -915,11 +930,19 @@ useStore.subscribe((s, prev) => {
   document.title = waiting ? `(${waiting}) vibeboard` : 'vibeboard'
 })
 
-// Edits from the last 400ms before a reload. Best effort: keepalive bodies are capped at 64KB.
+// Edits from the last 400ms before the window goes away. Leaving the page is the reliable moment to
+// save, because a request made while it unloads is capped at 64KB and a board with pictures is larger.
+addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden' || !saveTimer) return
+  clearTimeout(saveTimer)
+  save()
+})
+const KEEPALIVE_LIMIT = 60_000
 addEventListener('pagehide', () => {
   if (!saveTimer) return
   clearTimeout(saveTimer)
-  fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
+  const body = JSON.stringify(snapshot())
+  fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body, keepalive: body.length < KEEPALIVE_LIMIT }).catch((e) => console.error('last save failed', e))
 })
 
 export const agentColor = (id: string) => agentById(id)?.color ?? '#9a948c'

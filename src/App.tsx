@@ -9,6 +9,7 @@ export function App() {
   const ready = useStore((s) => s.ready)
   const active = useStore((s) => s.active)
   const toast = useStore((s) => s.toast)
+  const linkDown = useStore((s) => s.linkDown)
   const themeMode = useStore((s) => s.settings.theme)
 
   useEffect(() => useStore.getState().init(), [])
@@ -22,6 +23,7 @@ export function App() {
     <>
       {active ? <BoardScreen key={active} /> : <Home />}
       {toast && <div className="toast">{toast}</div>}
+      {linkDown && <div className="link-down">Reconnecting to vibeboard…</div>}
       <Tips />
     </>
   )

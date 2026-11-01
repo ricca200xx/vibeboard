@@ -442,6 +442,52 @@ test('a question is only answered while it is still the one on screen', async ()
   await api('DELETE', '/api/pty/choose-1')
 })
 
+test('a damaged board file is set aside and the backup takes over', async () => {
+  const dir = path.join(HOME, '.vibeboard')
+  const good = { projects: [], settings: { fontSize: 13 }, marker: 'good' }
+  const put = (body) => api('PUT', '/api/state', body)
+  assert.equal((await put(good)).status, 200)
+  // The first save of a run has no earlier file to copy; backups happen on later saves of a good file.
+  fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'state.json.bak'))
+  fs.writeFileSync(path.join(dir, 'state.json'), '{"projects": [broken')
+  const restored = await (await api('GET', '/api/state')).json()
+  assert.equal(restored.marker, 'good')
+  assert.equal(restored.recovered, 'backup')
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith('state.json.damaged-')))
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).marker, 'good')
+
+  fs.writeFileSync(path.join(dir, 'state.json'), 'nonsense')
+  fs.rmSync(path.join(dir, 'state.json.bak'))
+  assert.equal((await (await api('GET', '/api/state')).json()).recovered, 'empty')
+})
+
+test('a flooding console is paused until the page catches up, and never for ever', async () => {
+  const ws = await openShell('flood-1')
+  let got = 0
+  let ack = false
+  ws.on('message', (m) => {
+    got += m.length
+    if (ack) ws.send(JSON.stringify({ t: 'a', n: m.length }))
+  })
+  await sleep(300)
+  ws.send(JSON.stringify({ t: 'i', d: 'yes xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r' }))
+  // No acknowledgement: output stops near the high mark instead of growing without limit.
+  await sleep(1500)
+  const held = got
+  assert.ok(held > 100_000, `it should have started (${held})`)
+  assert.ok(held < 3_000_000, `it should be paused (${held})`)
+  await sleep(600)
+  assert.ok(got - held < 400_000, `still flowing while unacknowledged (${got - held})`)
+  // The page stays silent past the stall limit: the agent is let go.
+  await sleep(6500)
+  assert.ok(got > held + 300_000, 'a silent page must not freeze the process')
+  ack = true
+  ws.send(JSON.stringify({ t: 'i', d: '\x03' }))
+  await sleep(300)
+  ws.close()
+  await api('DELETE', '/api/pty/flood-1')
+})
+
 test('a transcript reads as a conversation, without the bookkeeping', () => {
   const line = (o) => JSON.stringify(o)
   const jsonl = [

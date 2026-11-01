@@ -35,6 +35,12 @@ const PROFILES_DIR = path.join(DATA_DIR, 'profiles')
 const PROFILE = /^[\w-]{1,40}$/
 const SHELL = process.env.SHELL || '/bin/zsh'
 const MAX_BUF = 512 * 1024
+const FLUSH_MS = 8 // output is sent in small batches: one message per chunk would flood the page
+// The page acknowledges what its terminal has drawn. Past the high mark the process is paused, as a
+// real terminal does, so `yes` or a huge `cat` cannot bury the page under minutes of backlog.
+const HIGH_WATER = 512 * 1024
+const LOW_WATER = 128 * 1024
+const STALL_MS = 5000 // a page that stops answering must not freeze the agent for ever
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -68,6 +74,42 @@ fs.writeFileSync(
     2,
   ),
 )
+
+// ---------- the board file ----------
+const STATE_BACKUP = STATE_FILE + '.bak'
+const BACKUP_EVERY_MS = 10 * 60_000
+let backedUpAt = 0
+
+// Copied only while the current file is known to read: a backup of a damaged file protects nothing.
+function backupState() {
+  if (Date.now() - backedUpAt < BACKUP_EVERY_MS || !fs.existsSync(STATE_FILE)) return
+  backedUpAt = Date.now()
+  try {
+    JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
+    fs.copyFileSync(STATE_FILE, STATE_BACKUP)
+  } catch (e) {
+    console.error('board backup skipped:', e.message)
+  }
+}
+
+// A damaged file is set aside, not overwritten, and the last backup takes its place.
+function readState() {
+  if (!fs.existsSync(STATE_FILE)) return {}
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
+  } catch (e) {
+    console.error('board file damaged:', e.message)
+  }
+  const kept = `${STATE_FILE}.damaged-${Date.now()}`
+  fs.renameSync(STATE_FILE, kept)
+  try {
+    const saved = JSON.parse(fs.readFileSync(STATE_BACKUP, 'utf8'))
+    fs.copyFileSync(STATE_BACKUP, STATE_FILE)
+    return { ...saved, recovered: 'backup' }
+  } catch {
+    return { recovered: 'empty' }
+  }
+}
 
 // ---------- security: only our own pages may talk to us ----------
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`])
@@ -192,6 +234,40 @@ function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
   return parts.map(shq).join(' ')
 }
 
+function flushOutput(s) {
+  clearTimeout(s.flushTimer)
+  s.flushTimer = null
+  if (!s.outbox) return
+  const data = s.outbox
+  s.outbox = ''
+  s.screen.write(data)
+  for (const c of s.clients) {
+    if (c.readyState !== 1) continue
+    c.send(data)
+    s.unacked.set(c, (s.unacked.get(c) ?? 0) + data.length)
+  }
+  holdOutput(s)
+}
+
+// Follows the slowest page that is attached.
+function holdOutput(s) {
+  const most = Math.max(0, ...s.unacked.values())
+  if (!s.paused_output && most > HIGH_WATER) {
+    s.paused_output = true
+    s.pty.pause()
+    s.lastAckAt = Date.now()
+    s.stallTimer = setInterval(() => {
+      if (Date.now() - s.lastAckAt < STALL_MS) return
+      s.unacked.clear()
+      holdOutput(s)
+    }, 1000)
+  } else if (s.paused_output && most < LOW_WATER) {
+    s.paused_output = false
+    clearInterval(s.stallTimer)
+    if (sessions.get(s.id) === s) s.pty.resume()
+  }
+}
+
 function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead, profile }) {
   const agent = agentById(agentId)
   if (!agent) throw new Error(`unknown agent ${agentId}`)
@@ -212,12 +288,12 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
     env: { ...CLEAN_ENV, ...account, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
   const screen = new headless.Terminal({ cols: cols || 100, rows: rows || 30, scrollback: 0, allowProposedApi: true })
-  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, screen, ask: null, activity: null, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
+  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, screen, ask: null, activity: null, outbox: '', flushTimer: null, unacked: new Map(), paused_output: false, stallTimer: null, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     s.lastOutputAt = Date.now()
-    for (const c of s.clients) if (c.readyState === 1) c.send(d)
-    screen.write(d)
+    s.outbox += d
+    s.flushTimer ??= setTimeout(() => flushOutput(s), FLUSH_MS)
     // A plain shell has no questions to answer: its programs' menus are its own business.
     if (agent.cmd) {
       clearTimeout(s.askTimer)
@@ -245,6 +321,8 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
     clearTimeout(s.idleTimer)
     clearTimeout(s.askTimer)
     clearTimeout(s.talkTimer)
+    flushOutput(s) // the last words go out before the sockets close
+    clearInterval(s.stallTimer)
     screen.dispose()
     sessions.delete(id)
     loops.onExit(s)
@@ -304,7 +382,10 @@ function signal(s, sig) {
   broadcast({ type: 'paused', id: s.id, paused: s.paused })
 }
 
-const writeTo = (s, text) => s.pty.write(text)
+// The process can exit between the check and the write, and a prompt queue must survive that.
+const writeTo = (s, text) => {
+  if (sessions.get(s.id) === s) s.pty.write(text)
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Multi-line text goes in as a bracketed paste so each newline doesn't submit on its own;
@@ -450,6 +531,16 @@ function transcriptTail(file, bytes = 2 * 1024 * 1024) {
   } finally {
     fs.closeSync(fd)
   }
+}
+
+function conversationOf(s) {
+  const file = transcriptFile(s)
+  if (!file) return []
+  const { size } = fs.statSync(file)
+  if (s.talk?.file === file && s.talk.size === size) return s.talk.items
+  const items = readConversation(transcriptTail(file))
+  s.talk = { file, size, items }
+  return items
 }
 
 function conversationText(s, max = 15000) {
@@ -724,11 +815,12 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] !== 'api') return serveStatic(url, res)
     const [, route, id, action] = parts
     if (route === 'state' && req.method === 'GET') {
-      return json(res, 200, fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {})
+      return json(res, 200, readState())
     }
     if (route === 'state' && req.method === 'PUT') {
       const body = await readBody(req)
       JSON.parse(body) // reject garbage before it overwrites good state
+      backupState()
       fs.writeFileSync(STATE_FILE + '.tmp', body)
       fs.renameSync(STATE_FILE + '.tmp', STATE_FILE)
       return json(res, 200, { ok: true })
@@ -746,6 +838,7 @@ const server = http.createServer(async (req, res) => {
         if (action === 'PreToolUse') setActivity(s, describeTool(payload.tool_name, payload.tool_input).doing)
         else if (action !== 'PostToolUse') setActivity(s, null)
         touchConversation(s, action === 'SessionStart')
+        if (action === 'Stop') setTimeout(() => sessions.get(s.id) === s && touchConversation(s), 1200)
         if (action === 'UserPromptSubmit' || action === 'PreToolUse' || action === 'PostToolUse') setStatus(s, 'working')
         else if (action === 'Stop') {
           setStatus(s, 'done')
@@ -826,8 +919,11 @@ const server = http.createServer(async (req, res) => {
           writeTo(s, moves > 0 ? '\x1b[B' : '\x1b[A')
           await sleep(60)
         }
-        if (moves) await sleep(120)
-        const now = await readScreen(s)
+        let now = await readScreen(s)
+        for (let tries = 0; moves && now?.id === body.askId && now.selected !== index && tries < 8; tries++) {
+          await sleep(100)
+          now = await readScreen(s)
+        }
         if (!now || now.id !== body.askId || now.selected !== index) return json(res, 409, { error: 'the question has changed' })
         writeTo(s, '\r')
         s.answered = body.askId
@@ -842,8 +938,7 @@ const server = http.createServer(async (req, res) => {
         if (s.agent.hooks) {
           for (const ms of [1200, 3500]) {
             setTimeout(() => {
-              const file = sessions.get(s.id) === s && s.status === 'working' && transcriptFile(s)
-              if (!file || readConversation(transcriptTail(file)).at(-1)?.kind !== 'note') return
+              if (sessions.get(s.id) !== s || s.status !== 'working' || conversationOf(s).at(-1)?.kind !== 'note') return
               setStatus(s, 'idle')
               setActivity(s, null)
               settleSubagents(s)
@@ -859,8 +954,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (action === 'tail') return json(res, 200, { text: s.buf.slice(-(Number(body.chars) || 8000)) })
       if (action === 'conversation') {
-        const file = transcriptFile(s)
-        return json(res, 200, { items: file ? readConversation(transcriptTail(file)) : [] })
+        return json(res, 200, { items: conversationOf(s) })
       }
     }
     if (route === 'ls') {
@@ -1087,7 +1181,7 @@ function attachPty(ws, q) {
       })
     } catch (e) {
       ws.send(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`)
-      return ws.close()
+      return ws.close(4001, e.message.slice(0, 120))
     }
   } else if (s.buf) {
     ws.send(s.buf.replace(QUERIES, ''))
@@ -1105,7 +1199,11 @@ function attachPty(ws, q) {
       return
     }
     if (!m || typeof m !== 'object') return
-    if (m.t === 'i' && typeof m.d === 'string') {
+    if (m.t === 'a' && Number.isFinite(m.n)) {
+      s.unacked.set(ws, Math.max(0, (s.unacked.get(ws) ?? 0) - m.n))
+      s.lastAckAt = Date.now()
+      holdOutput(s)
+    } else if (m.t === 'i' && typeof m.d === 'string') {
       s.pty.write(m.d)
       s.lastInputAt = Date.now()
       if (s.status === 'done') setStatus(s, 'idle')
@@ -1115,9 +1213,17 @@ function attachPty(ws, q) {
       if (c && r) resize(s, c, r)
     }
   })
-  ws.on('close', () => s.clients.delete(ws))
+  ws.on('close', () => {
+    s.clients.delete(ws)
+    s.unacked.delete(ws)
+    if (sessions.get(s.id) === s) holdOutput(s)
+  })
 }
 
+server.on('error', (e) => {
+  console.error(e.code === 'EADDRINUSE' ? `port ${PORT} is in use by another program` : e)
+  process.exit(1)
+})
 server.listen(PORT, '127.0.0.1', () => console.log(`vibeboard server on http://127.0.0.1:${PORT}`))
 
 // Give agents up to 3s to close their own tool shells, then kill whatever is left,

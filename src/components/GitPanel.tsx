@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -42,15 +42,25 @@ export function GitPill() {
   const [git, setGit] = useState<GitInfo | null | undefined>(undefined); // null: not a repository
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
-  const load = () =>
+  const loading = useRef(false);
+  const load = () => {
+    // A big repository can take longer than the interval: never two at once.
+    if (loading.current) return;
+    loading.current = true;
     api
       .git(p.path)
       .then(setGit)
-      .catch(() => setGit(undefined));
+      .catch(() => setGit(undefined))
+      .finally(() => (loading.current = false));
+  };
   useEffect(() => {
     load();
-    const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
+    const t = setInterval(() => !document.hidden && load(), 15_000);
+    addEventListener("focus", load);
+    return () => {
+      clearInterval(t);
+      removeEventListener("focus", load);
+    };
   }, [p.path]);
   if (git === undefined) return null;
   // A folder without git still gets the pill: one click makes it a repository.

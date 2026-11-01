@@ -1,8 +1,23 @@
 // Thin client for the local server (server/index.mjs).
 const wsBase = () => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
 
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+const READ_RETRIES = 2
+
+// Reads retry a dropped connection on their own. Writes never do: the server may have acted already.
+async function reach(url: string, init: RequestInit) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fetch(url, init)
+    } catch {
+      if (init.method !== 'GET' || attempt >= READ_RETRIES) throw new Error('vibeboard is not responding')
+      await wait(300 * 2 ** attempt)
+    }
+  }
+}
+
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const res = await reach(url, {
     method,
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -85,6 +100,7 @@ export const api = {
   conversation: (id: string) => call<{ items: ConversationItem[] }>('GET', `/api/pty/${id}/conversation`),
   stop: (id: string) => call('POST', `/api/pty/${id}/stop`),
   choose: (id: string, askId: string, index: number) => call('POST', `/api/pty/${id}/choose`, { askId, index }),
+  sessions: () => call<LiveSession[]>('GET', '/api/sessions'),
   kill: (id: string) => call('DELETE', `/api/pty/${id}`),
   input: (id: string, data: string) => call('POST', `/api/pty/${id}/input`, { data }),
   prompt: (id: string, prompt: string) => call('POST', `/api/pty/${id}/input`, { prompt }),
@@ -151,12 +167,22 @@ export type ServerEvent =
   | { type: 'helper'; parent: string; id: string; name: string; agent: string; role: string; cwd: string; yolo: boolean }
 
 // Reconnects forever: the server restarts under `node --watch` during development.
-export function connectEvents(onEvent: (e: ServerEvent) => void) {
-  let ws: WebSocket
+const MAX_RETRY_MS = 5000
+
+export function connectEvents(onEvent: (e: ServerEvent) => void, onLink: (up: boolean) => void) {
+  let delay = 300
   const open = () => {
-    ws = new WebSocket(`${wsBase()}/ws/events`)
+    const ws = new WebSocket(`${wsBase()}/ws/events`)
+    ws.onopen = () => {
+      delay = 300
+      onLink(true)
+    }
     ws.onmessage = (m) => onEvent(JSON.parse(m.data))
-    ws.onclose = () => setTimeout(open, 1000)
+    ws.onclose = () => {
+      onLink(false)
+      setTimeout(open, delay)
+      delay = Math.min(delay * 2, MAX_RETRY_MS)
+    }
   }
   open()
 }

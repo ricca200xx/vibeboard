@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUp, Check, Square, TerminalSquare, X } from 'lucide-react'
 import { api, type Ask, type ConversationItem } from '../api'
 import { renderMarkdown } from '../markdown'
@@ -8,6 +8,7 @@ import { isRefusal } from '../../shared/prompts.js'
 import type { ConsoleStatus } from './ConsoleNode'
 
 const NOT_STARTED_MS = 8000
+const drafts = new Map<string, string>() // what is being typed survives a switch to the terminal and back
 const EMPTY: ConversationItem[] = []
 
 // The sentence under the console's title: what it is doing, in plain words.
@@ -21,10 +22,11 @@ export function StatusStrip({ id, status }: { id: string; status: ConsoleStatus 
   )
 }
 
-function Agent({ text }: { text: string }) {
+// Memoised: a long conversation re-renders on every step, and markdown is the expensive part.
+const Agent = memo(function Agent({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text])
   return <div className="simple-msg agent paper dark" dangerouslySetInnerHTML={{ __html: html }} />
-}
+})
 
 // Runs of tool steps fold together, so a long job does not bury what the agent said.
 function Steps({ steps, open }: { steps: ConversationItem[]; open: boolean }) {
@@ -84,7 +86,10 @@ export function Conversation({ id, name }: { id: string; name: string }) {
   }, [items, pending])
 
   const rows = grouped(items)
-  const waiting = pending && !items.some((i) => i.kind === 'user' && i.text === pending)
+  const mine = items.filter((i) => i.kind === 'user').length
+  const before = useRef({ prompt: pending, count: mine })
+  if (before.current.prompt !== pending) before.current = { prompt: pending, count: mine }
+  const waiting = pending && mine <= before.current.count
   return (
     <div
       ref={ref}
@@ -161,12 +166,16 @@ function TerminalNote({ id, text }: { id: string; text: string }) {
 export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleData; status: ConsoleStatus }) {
   const ask = useStore((s) => s.live[id]?.ask)
   const started = useStore((s) => s.live[id]?.started)
-  const [text, setText] = useState('')
+  const [text, setTextState] = useState(() => drafts.get(id) ?? '')
+  const setText = (v: string) => {
+    drafts.set(id, v)
+    setTextState(v)
+  }
   const [late, setLate] = useState(false)
   const box = useRef<HTMLTextAreaElement>(null)
   const claude = data.agent === 'claude'
   // Before its session starts, Enter would answer whatever the CLI is showing (it can mean "No, exit").
-  const locked = !!ask || (claude && !started)
+  const locked = !!ask || (claude && !started) || status === 'paused'
 
   useEffect(() => {
     if (!claude || started) return setLate(false)
@@ -178,8 +187,12 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
     const prompt = text.trim()
     if (!prompt || locked) return
     useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: prompt } }))
-    api.prompt(id, prompt).catch((e) => useStore.getState().notify(`Could not send it: ${(e as Error).message}`))
     setText('')
+    api.prompt(id, prompt).catch((e) => {
+      setText(prompt)
+      useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: '' } }))
+      useStore.getState().notify(`Could not send it: ${(e as Error).message}`)
+    })
   }
 
   return (
@@ -203,7 +216,7 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
           rows={1}
           value={text}
           disabled={locked}
-          placeholder={ask ? 'Answer the question above first' : locked ? 'Starting…' : `Tell ${data.name} what to do…`}
+          placeholder={ask ? 'Answer the question above first' : status === 'paused' ? 'Paused. Resume it to continue' : locked ? 'Starting…' : `Tell ${data.name} what to do…`}
           onChange={(e) => {
             setText(e.target.value)
             e.target.style.height = 'auto'

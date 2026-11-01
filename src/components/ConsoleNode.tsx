@@ -103,7 +103,22 @@ function launchParams(id: string, epoch: number): Record<string, string> {
   return params
 }
 
-function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit: () => void }) {
+const COMMAND_NOT_FOUND = 127
+
+// Why it stopped, in words that say what to do about it.
+function exitMessage(name: string, code: number | undefined, reason: string | null) {
+  if (reason?.startsWith('folder not found')) return `This project's folder is gone: ${reason.replace('folder not found: ', '')}`
+  if (reason) return `${name} could not start: ${reason}`
+  if (code === COMMAND_NOT_FOUND) return `${name} is not installed on this Mac. Install it, or pick another agent from the menu at the top left of this console.`
+  if (code === 0 || code === undefined) return `${name} has closed.`
+  return `${name} stopped unexpectedly (code ${code}).`
+}
+
+const ACK_EVERY = 64 * 1024
+const RETRY_FIRST_MS = 400
+const RETRY_MAX_MS = 5000
+
+function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit: (reason?: string) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null)
   const fontSize = useStore((s) => s.settings.fontSize)
@@ -135,10 +150,44 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       if (disposed) return
       term.open(el)
       refit()
-      ws = new WebSocket(ptyUrl({ id, cols: String(term.cols), rows: String(term.rows), ...launchParams(id, epoch) }))
-      ws.onmessage = (e) => term.write(e.data)
-      // Any close we did not cause means the process is gone (exit, server restart or crash).
-      ws.onclose = () => !disposed && onExit()
+      // Tells the server how much has been drawn. A hidden tab draws slowly by design: it does not hold agents back.
+      let drawn = 0
+      const ack = (n: number) => {
+        drawn += n
+        if (drawn < ACK_EVERY && !document.hidden) return
+        if (ws?.readyState === 1) ws.send(JSON.stringify({ t: 'a', n: drawn }))
+        drawn = 0
+      }
+      let delay = RETRY_FIRST_MS
+      const connect = () => {
+        ws = new WebSocket(ptyUrl({ id, cols: String(term.cols), rows: String(term.rows), ...launchParams(id, epoch) }))
+        ws.onopen = () => (delay = RETRY_FIRST_MS)
+        ws.onmessage = (e) => term.write(e.data, () => ack(e.data.length))
+        ws.onclose = (e) => {
+          if (disposed) return
+          if (e.code === 4000) return onExit()
+          if (e.code === 4001) return onExit(e.reason)
+          retry()
+        }
+      }
+      // The socket fell but the agent may be fine (the Mac slept, the server restarted): look before
+      // declaring it dead, and pick the screen up again if it is still running.
+      const retry = () => {
+        setTimeout(async () => {
+          if (disposed) return
+          try {
+            const alive = (await api.sessions()).some((x) => x.id === id)
+            if (disposed) return
+            if (!alive) return onExit()
+            term.reset()
+            connect()
+          } catch {
+            delay = Math.min(delay * 2, RETRY_MAX_MS)
+            retry()
+          }
+        }, delay)
+      }
+      connect()
       term.onData((data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'i', d: data })))
       // "Typing starts fresh": only a real keystroke dismisses the resume offer. onData would not do:
       // it also fires for the terminal's automatic replies to the TUI's capability queries.
@@ -301,6 +350,8 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
   const [agentMenu, setAgentMenu] = useState(false)
   const [handMenu, setHandMenu] = useState(false)
   const [exited, setExited] = useState(false)
+  const [exitReason, setExitReason] = useState<string | null>(null)
+  const exitCode = useStore((s) => s.exits[id])
   const profiles = useStore((s) => s.settings.profiles) ?? []
   const account = data.profile ? profiles.find((p) => p.id === data.profile) : undefined
   const status: ConsoleStatus = !live ? 'stopped' : live.paused ? 'paused' : live.status
@@ -441,7 +492,14 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
         {simple && !chat && <StatusStrip id={id} status={status} />}
 
         <div className="console-body nodrag nowheel nopan">
-          <TerminalView id={id} epoch={data.epoch} onExit={() => setExited(true)} />
+          <TerminalView
+            id={id}
+            epoch={data.epoch}
+            onExit={(reason) => {
+              setExited(true)
+              setExitReason(reason ?? null)
+            }}
+          />
           {/* Laid over the terminal, never beside it: resizing a terminal makes the CLI redraw, and a
               question that opens and closes with each redraw would resize it again, forever. */}
           {chat && (
@@ -454,9 +512,9 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
           {exited && (
             <div className="console-overlay">
               <div className="box">
-                <div>{agentById(data.agent)?.name ?? 'Process'} exited</div>
+                <div>{exitMessage(agentById(data.agent)?.name ?? 'This console', exitCode, exitReason)}</div>
                 <button className="btn primary" onClick={() => restartConsole(id, false)}>
-                  <RotateCw size={14} /> Relaunch
+                  <RotateCw size={14} /> Start again
                 </button>
               </div>
             </div>

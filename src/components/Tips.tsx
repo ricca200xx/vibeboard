@@ -30,6 +30,7 @@ export function Tips() {
     }
     const over = (e: PointerEvent) => {
       if (!(e.target instanceof Element)) return
+      if (held && !held.el.isConnected) release() // its control has gone (a menu that closed)
       const el = e.target.closest('[title]')
       if (el) show(el, DELAY)
       else if (!held?.el.contains(e.target)) release()
