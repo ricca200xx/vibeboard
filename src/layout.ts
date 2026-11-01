@@ -7,6 +7,24 @@ export const GROUP_HEAD = 44
 const GROUP_GAP = 60 // room for a console's sub-agent cards above the next row
 const EMPTY_GROUP = { width: 380, height: 220 }
 
+type Size = { width: number; height: number }
+type Box = Size & { left: number; top: number; right: number; bottom: number }
+
+// Where a tooltip goes: away from the window edge its control sits on, and always fully inside.
+export function tipSpot(anchor: Box, tip: Size, win: Size, gap = 8, margin = 8) {
+  const cx = anchor.left + anchor.width / 2 - tip.width / 2
+  const cy = anchor.top + anchor.height / 2 - tip.height / 2
+  let x = cx
+  let y = anchor.top - tip.height - gap
+  if (anchor.right < 120) [x, y] = [anchor.right + gap, cy]
+  else if (anchor.left > win.width - 120) [x, y] = [anchor.left - tip.width - gap, cy]
+  else if (y < margin) y = anchor.bottom + gap
+  return {
+    x: Math.round(Math.max(margin, Math.min(x, win.width - tip.width - margin))),
+    y: Math.round(Math.max(margin, Math.min(y, win.height - tip.height - margin))),
+  }
+}
+
 export const sizeOf = (n: Node) => ({
   width: n.measured?.width ?? n.width ?? (n.style?.width as number) ?? CONSOLE_SIZE.width,
   height: n.measured?.height ?? n.height ?? (n.style?.height as number) ?? CONSOLE_SIZE.height,

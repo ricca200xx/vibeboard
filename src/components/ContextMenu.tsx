@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Node } from '@xyflow/react'
 import {
   ArrowRight,
@@ -30,6 +30,7 @@ import {
   Plus,
   RotateCw,
   SendToBack,
+  Shapes,
   Sparkles,
   Square,
   StickyNote,
@@ -76,18 +77,45 @@ function usePanelPos(at: MenuAt, width: number, height: number) {
 
 // ---------- the board: a ring of the usual things around the pointer ----------
 type View = 'ring' | 'agents' | 'shapes' | 'group' | 'more'
-const PETALS: { key: string; label: string; angle: number; icon: React.ReactNode }[] = [
-  { key: 'agents', label: 'Spawn an agent', angle: -90, icon: <Sparkles size={18} /> },
-  { key: 'image', label: 'Image', angle: -30, icon: <Image size={18} /> },
-  { key: 'web', label: 'Web tile', angle: 30, icon: <Globe size={18} /> },
-  { key: 'paste', label: 'Paste', angle: 90, icon: <ClipboardPaste size={18} /> },
-  { key: 'shapes', label: 'Shapes', angle: 150, icon: <Copy size={18} /> },
-  { key: 'group', label: 'Compose a group', angle: 210, icon: <Users size={18} /> },
+const PETALS: { key: string; label: string; hint: string; angle: number; icon: React.ReactNode }[] = [
+  { key: 'agents', label: 'New agent', hint: 'Start a coding agent here', angle: -90, icon: <Sparkles size={18} /> },
+  { key: 'image', label: 'Image', hint: 'Pick a picture from your Mac', angle: -30, icon: <Image size={18} /> },
+  { key: 'web', label: 'Web page', hint: 'Open a website on the board', angle: 30, icon: <Globe size={18} /> },
+  { key: 'paste', label: 'Paste', hint: 'Put what you copied here', angle: 90, icon: <ClipboardPaste size={18} /> },
+  { key: 'shapes', label: 'Shapes', hint: 'Boxes, arrows and sticky notes', angle: 150, icon: <Shapes size={18} /> },
+  { key: 'group', label: 'Group of agents', hint: 'Start several agents together', angle: 210, icon: <Users size={18} /> },
 ]
+const MORE = { label: 'More', hint: 'Notes, to-dos, orchestrator, diagrams', angle: -90 }
+type Petal = { label: string; hint: string; angle: number }
 const RADIUS = 84
+const LABEL_REACH = RADIUS + 40 // from the middle of the ring to the label
+
+// Says what the petal under the pointer does: outside the ring, on that petal's side, inside the window.
+function PetalLabel({ at, petal }: { at: Point; petal: Petal }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current!
+    const { width, height } = el.getBoundingClientRect()
+    const a = (petal.angle * Math.PI) / 180
+    const px = at.x + Math.cos(a) * LABEL_REACH
+    const py = at.y + Math.sin(a) * LABEL_REACH
+    const side = Math.cos(a)
+    const x = side > 0.2 ? px : side < -0.2 ? px - width : px - width / 2
+    const y = Math.abs(side) > 0.2 ? py - height / 2 : py > at.y ? py : py - height
+    el.style.left = `${Math.max(8, Math.min(x, innerWidth - width - 8))}px`
+    el.style.top = `${Math.max(8, Math.min(y, innerHeight - height - 8))}px`
+  }, [at.x, at.y, petal])
+  return (
+    <div ref={ref} className="petal-label" role="status">
+      <b>{petal.label}</b>
+      <span>{petal.hint}</span>
+    </div>
+  )
+}
 
 function RadialMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
   const [view, setView] = useState<View>('ring')
+  const [hover, setHover] = useState<Petal | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const s = useStore.getState()
   const done = (fn: () => void) => () => (fn(), onClose())
@@ -112,22 +140,29 @@ function RadialMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
     setView(key as View)
   }
 
+  // The whole ring fits on screen wherever the click was.
+  const ring = { x: Math.max(RADIUS + 34, Math.min(at.x, innerWidth - RADIUS - 34)), y: Math.max(RADIUS + 34, Math.min(at.y, innerHeight - RADIUS - 34)) }
+
   if (view === 'group') return <GroupPanel at={at} onClose={onClose} onBack={() => setView('ring')} />
   if (view !== 'ring')
     return (
-      <Panel at={at} title={view === 'agents' ? 'Spawn an agent' : view === 'shapes' ? 'Shapes' : 'Add to the board'} onBack={() => setView('ring')}>
+      <Panel at={at} title={view === 'agents' ? 'New agent' : view === 'shapes' ? 'Shapes' : 'Add to the board'} onBack={() => setView('ring')}>
         {view === 'agents' && <AgentList onPick={(a) => done(() => s.addConsole(a, at.flow))()} />}
         {view === 'shapes' && <ShapeList at={at.flow} onDone={onClose} />}
         {view === 'more' && <MoreList at={at.flow} onDone={onClose} />}
       </Panel>
     )
   return (
-    <div className="radial" style={{ left: at.x, top: at.y }}>
+    <div className="radial" style={{ left: ring.x, top: ring.y }}>
       {PETALS.map((p, i) => (
         <button
           key={p.key}
           className="petal"
-          title={p.label}
+          aria-label={`${p.label}. ${p.hint}`}
+          onPointerEnter={() => setHover(p)}
+          onPointerLeave={() => setHover(null)}
+          onFocus={() => setHover(p)}
+          onBlur={() => setHover(null)}
           style={{
             left: Math.cos((p.angle * Math.PI) / 180) * RADIUS,
             top: Math.sin((p.angle * Math.PI) / 180) * RADIUS,
@@ -138,7 +173,15 @@ function RadialMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
           {p.icon}
         </button>
       ))}
-      <button className="petal center" title="More" onClick={() => setView('more')}>
+      <button
+        className="petal center"
+        aria-label={`${MORE.label}. ${MORE.hint}`}
+        onPointerEnter={() => setHover(MORE)}
+        onPointerLeave={() => setHover(null)}
+        onFocus={() => setHover(MORE)}
+        onBlur={() => setHover(null)}
+        onClick={() => setView('more')}
+      >
         <MoreHorizontal size={16} />
         <small>More</small>
       </button>
@@ -152,6 +195,7 @@ function RadialMenu({ at, onClose }: { at: MenuAt; onClose: () => void }) {
           onClose()
         }}
       />
+      {hover && <PetalLabel at={ring} petal={hover} />}
     </div>
   )
 }
@@ -228,22 +272,22 @@ function ShapeList({ at, onDone }: { at: Point; onDone: () => void }) {
 
 function MoreList({ at, onDone }: { at: Point; onDone: () => void }) {
   const s = useStore.getState()
-  const items: [string, React.ReactNode, () => void][] = [
-    ['Orchestrator', <Orbit size={15} />, () => addOrchestrator(at)],
-    ['Shell console', <Monitor size={15} />, () => s.addConsole('shell', at)],
-    ['Text', <Type size={15} />, () => s.addNode({ id: nid('t'), type: 'text', position: at, data: { text: '' } })],
-    ['Sticky note', <StickyNote size={15} />, () => s.addNode(newSticky(at))],
-    ['Checklist', <ListChecks size={15} />, () => insertCard('checklist', 300, 340, { items: [] }, at)],
-    ['Board (kanban)', <Columns3 size={15} />, () => insertCard('kanban', 1060, 440, structuredClone(NEW_BOARD), at)],
-    ['Calendar', <CalendarDays size={15} />, () => insertCard('calendar', 600, 500, { events: [] }, at)],
-    ['Memory card', <StickyNote size={15} />, () => s.addNode({ id: nid('m'), type: 'memory', position: { x: at.x - 160, y: at.y - 120 }, style: { width: 320 }, data: {} })],
-    ['Draw a diagram of this repo', <Workflow size={15} />, () => startDiagram()],
-    ['Fit the board', <Maximize2 size={15} />, () => s.flow?.fitView({ padding: 0.12, duration: 400 })],
+  const items: [string, React.ReactNode, () => void, string][] = [
+    ['Orchestrator', <Orbit size={15} />, () => addOrchestrator(at), 'Give orders to several agents from one place'],
+    ['Shell console', <Monitor size={15} />, () => s.addConsole('shell', at), 'A plain terminal, with no agent in it'],
+    ['Text', <Type size={15} />, () => s.addNode({ id: nid('t'), type: 'text', position: at, data: { text: '' } }), 'Write a label on the board'],
+    ['Sticky note', <StickyNote size={15} />, () => s.addNode(newSticky(at)), 'A note you can move around'],
+    ['Checklist', <ListChecks size={15} />, () => insertCard('checklist', 300, 340, { items: [] }, at), 'A list of things to tick off'],
+    ['Board (kanban)', <Columns3 size={15} />, () => insertCard('kanban', 1060, 440, structuredClone(NEW_BOARD), at), 'Tasks in columns, from to-do to done'],
+    ['Calendar', <CalendarDays size={15} />, () => insertCard('calendar', 600, 500, { events: [] }, at), 'A month of dates and events'],
+    ['Memory card', <StickyNote size={15} />, () => s.addNode({ id: nid('m'), type: 'memory', position: { x: at.x - 160, y: at.y - 120 }, style: { width: 320 }, data: {} }), 'Notes about this project to give to your agents'],
+    ['Draw a diagram of this repo', <Workflow size={15} />, () => startDiagram(), 'Your agent reads the code and draws how it fits together'],
+    ['Fit the board', <Maximize2 size={15} />, () => s.flow?.fitView({ padding: 0.12, duration: 400 }), 'Zoom so that everything is in view'],
   ]
   return (
     <div className="ctx-list">
-      {items.map(([label, icon, run]) => (
-        <button key={label} onClick={() => (run(), onDone())}>
+      {items.map(([label, icon, run, hint]) => (
+        <button key={label} title={hint} onClick={() => (run(), onDone())}>
           {icon} {label}
         </button>
       ))}
@@ -349,12 +393,12 @@ function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () =
     )
   if (sub === 'orchs')
     return (
-      <Panel at={at} title="Wire to an orchestrator" onBack={() => setSub(null)}>
+      <Panel at={at} title="Connect to an orchestrator" onBack={() => setSub(null)}>
         <div className="ctx-list">
           {orchs.map((o, i) => (
             <button key={o.id} onClick={run(() => s.toggleWire(o.id, node.id))}>
               <span className="orb sm" /> {orchs.length > 1 ? `Orchestrator ${i + 1}` : 'Orchestrator'}
-              <small>{wiredTo(o.id) ? 'wired · unwire' : 'wire'}</small>
+              <small>{wiredTo(o.id) ? 'connected · disconnect' : 'connect'}</small>
             </button>
           ))}
           <button onClick={run(() => addOrchestrator({ x: at.flow.x - 460, y: at.flow.y }))}>
@@ -394,31 +438,31 @@ function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () =
       </Panel>
     )
 
-  const items: ([string, React.ReactNode, () => void, boolean?] | null)[] =
+  const items: ([string, React.ReactNode, () => void, boolean?, string?] | null)[] =
     node.type === 'console'
       ? [
           ['Rename', <Pencil size={15} />, () => setSub('rename'), true],
           ['Duplicate', <Copy size={15} />, run(() => s.duplicateConsole(node.id))],
-          ['Restart', <RotateCw size={15} />, run(() => s.restartConsole(node.id))],
+          ['Restart', <RotateCw size={15} />, run(() => s.restartConsole(node.id)), false, 'Stop it and start it again'],
           live ? [live.paused ? 'Resume' : 'Pause', live.paused ? <Play size={15} /> : <Pause size={15} />, run(() => api.signal(node.id, live.paused ? 'SIGCONT' : 'SIGSTOP'))] : null,
-          ['Focus', <Crosshair size={15} />, run(() => s.jumpTo(node.id))],
-          ['Link to…', <Link2 size={15} />, () => setSub('link'), true],
-          ['Add to group', <LayoutGrid size={15} />, () => setSub('groups'), true],
-          ['Wire to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true],
-          ['Close…', <Trash2 size={15} />, () => setSub('close'), true],
+          ['Focus', <Crosshair size={15} />, run(() => s.jumpTo(node.id)), false, 'Zoom the board onto it'],
+          ['Link to…', <Link2 size={15} />, () => setSub('link'), true, 'Let its work pass to another agent'],
+          ['Add to group', <LayoutGrid size={15} />, () => setSub('groups'), true, 'Keep it together with other agents'],
+          ['Connect to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true, 'Let an orchestrator give it orders'],
+          ['Close…', <Trash2 size={15} />, () => setSub('close'), true, 'Stop it and remove it from the board'],
         ]
       : node.type === 'group'
         ? [
             ['Rename', <Pencil size={15} />, () => setSub('rename'), true],
             ['Colour', <span className="ctx-dot" style={{ background: (node.data as GroupData).color }} />, () => setSub('colour'), true],
             ['Add an agent', <Plus size={15} />, () => setSub('agents'), true],
-            ['Frame it', <Crosshair size={15} />, run(() => s.frame([node.id]))],
-            ['Wire to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true],
-            ['Ungroup', <X size={15} />, run(() => s.ungroup(node.id))],
+            ['Frame it', <Crosshair size={15} />, run(() => s.frame([node.id])), false, 'Zoom the board onto this group'],
+            ['Connect to an orchestrator', <Orbit size={15} />, () => setSub('orchs'), true, 'Let an orchestrator give this group orders'],
+            ['Ungroup', <X size={15} />, run(() => s.ungroup(node.id)), false, 'Remove the group and keep its agents'],
           ]
         : node.type === 'orchestrator'
           ? [
-              ['Connect consoles', <Plug size={15} />, run(() => s.set({ connecting: node.id }))],
+              ['Connect consoles', <Plug size={15} />, run(() => s.set({ connecting: node.id })), false, 'Then click the agents it should give orders to'],
               ['Remove', <Trash2 size={15} />, run(() => s.removeNode(node.id))],
             ]
           : [
@@ -434,8 +478,8 @@ function NodeMenu({ at, node, onClose }: { at: MenuAt; node: Node; onClose: () =
         <b>{label}</b>
       </div>
       <div className="ctx-list">
-        {items.filter((x) => x !== null).map(([text, icon, fn, more]) => (
-          <button key={text} onClick={fn}>
+        {items.filter((x) => x !== null).map(([text, icon, fn, more, hint]) => (
+          <button key={text} title={hint} onClick={fn}>
             {icon} {text}
             {more && <ChevronRight size={14} className="more" />}
           </button>

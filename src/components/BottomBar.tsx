@@ -28,10 +28,10 @@ const ROLES: [string, string][] = [
 ]
 const FILL = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'shell', 'aider', 'cursor', 'qwen', 'copilot']
 
-function Chip({ k, label, onClick, on }: { k: keyof typeof CHIPS; label: string; onClick: () => void; on?: boolean }) {
+function Chip({ k, label, hint, onClick, on }: { k: keyof typeof CHIPS; label: string; hint: string; onClick: () => void; on?: boolean }) {
   const [a, b] = CHIPS[k]
   return (
-    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} onClick={onClick}>
+    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} title={hint} onClick={onClick}>
       {label}
     </button>
   )
@@ -49,11 +49,12 @@ export function BottomBar() {
         {composer && <Composer onClose={() => setComposer(false)} />}
         {modal === 'presets' && <Presets />}
         <div className="chips">
-          <Chip k="new" label="New console" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
-          <Chip k="spawn" label="Spawn 4" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
+          <Chip k="new" label="New console" hint="Start one more agent" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
+          <Chip k="spawn" label="4 agents" hint="Start four agents at once" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
           <Chip
             k="group"
             label="Group"
+            hint="Put the selected agents in a group, or start a new group"
             on={composer}
             onClick={() => {
               const selected = consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected && !n.parentId)
@@ -61,10 +62,10 @@ export function BottomBar() {
               else setComposer((v) => !v)
             }}
           />
-          <Chip k="presets" label="Presets" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
-          <Chip k="pause" label="Pause all" onClick={s.pauseAll} />
-          <Chip k="resume" label="Resume all" onClick={s.resumeAll} />
-          <Chip k="memory" label="Memory" onClick={() => s.set({ modal: 'memory' })} />
+          <Chip k="presets" label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
+          <Chip k="pause" label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
+          <Chip k="resume" label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
+          <Chip k="memory" label="Memory" hint="Notes about this project to give to your agents" onClick={() => s.set({ modal: 'memory' })} />
         </div>
       </div>
       <CommandBar />
@@ -410,10 +411,10 @@ function CommandBar() {
       <button className="round-btn" title="Recent commands" onClick={() => setShowHistory((v) => !v)}>
         <ChevronUp size={17} />
       </button>
-      <button className="round-btn" title="Send" onClick={submit}>
+      <button className="round-btn" title="Send to your agents" onClick={submit}>
         <ArrowUp size={16} />
       </button>
-      <button className={`round-btn ${listening ? 'hot' : ''}`} title="Dictate" onClick={() => (listening ? stopVoice() : startVoice())}>
+      <button className={`round-btn ${listening ? 'hot' : ''}`} title="Dictate instead of typing (or hold space)" onClick={() => (listening ? stopVoice() : startVoice())}>
         {listening ? <Square size={13} fill="currentColor" /> : <Mic size={16} />}
       </button>
       {reply && (

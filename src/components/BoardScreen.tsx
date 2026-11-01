@@ -9,7 +9,6 @@ import {
   type Node,
 } from '@xyflow/react'
 import {
-  Copy,
   Eraser,
   FileText,
   FileType,
@@ -18,6 +17,7 @@ import {
   Image,
   Layers,
   ListChecks,
+  Shapes,
   Maximize2,
   Minus,
   Monitor,
@@ -279,15 +279,15 @@ function Board() {
 }
 
 const TOOLS: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
-  { tool: 'select', icon: <MousePointer2 size={19} fill="currentColor" />, tip: 'Select' },
-  { tool: 'spawn', icon: <ClaudeMark size={20} />, tip: 'Spawn agent' },
-  { tool: 'shape', icon: <Copy size={19} />, tip: 'Shapes' },
+  { tool: 'select', icon: <MousePointer2 size={19} fill="currentColor" />, tip: 'Select and move things' },
+  { tool: 'spawn', icon: <ClaudeMark size={20} />, tip: 'New agent: pick one, then click the board' },
+  { tool: 'shape', icon: <Shapes size={19} />, tip: 'Shapes and sticky notes' },
 ]
 const TOOLS_2: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
-  { tool: 'text', icon: <Type size={19} />, tip: 'Text' },
-  { tool: 'ink', icon: <PenTool size={18} />, tip: 'Ink' },
-  { tool: 'eraser', icon: <Eraser size={18} />, tip: 'Eraser' },
-  { tool: 'web', icon: <Globe size={19} />, tip: 'Web tile' },
+  { tool: 'text', icon: <Type size={19} />, tip: 'Text: click the board to write' },
+  { tool: 'ink', icon: <PenTool size={18} />, tip: 'Draw freehand' },
+  { tool: 'eraser', icon: <Eraser size={18} />, tip: 'Eraser: click what to remove' },
+  { tool: 'web', icon: <Globe size={19} />, tip: 'Web page: click the board to place it' },
 ]
 
 function LeftToolbar() {
@@ -308,7 +308,7 @@ function LeftToolbar() {
       <div className="toolbar">
         {TOOLS.map((t) => (
           <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
-            <button className={`tool-btn ${isOn(t.tool) ? 'active' : ''}`} data-tip={menu === t.tool ? undefined : t.tip} onClick={() => pick(t.tool)}>
+            <button className={`tool-btn ${isOn(t.tool) ? 'active' : ''}`} title={menu === t.tool ? undefined : t.tip} onClick={() => pick(t.tool)}>
               {t.tool === 'spawn' && tool === 'spawn' ? <ClaudeMark size={20} color="#fff" /> : t.icon}
             </button>
             {t.tool === 'shape' && menu === 'shape' && <ShapesMenu onClose={() => setMenu(null)} />}
@@ -316,7 +316,7 @@ function LeftToolbar() {
         ))}
         <button
           className="tool-btn"
-          data-tip="Shell console"
+          title="Shell console: a plain terminal"
           onClick={() => {
             const s = useStore.getState()
             s.addConsole('shell', s.viewCenter())
@@ -326,17 +326,17 @@ function LeftToolbar() {
         </button>
         {TOOLS_2.map((t) => (
           <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
-            <button className={`tool-btn ${tool === t.tool ? 'active' : ''}`} data-tip={tool === t.tool && t.tool === 'ink' ? undefined : t.tip} onClick={() => pick(t.tool)}>
+            <button className={`tool-btn ${tool === t.tool ? 'active' : ''}`} title={tool === t.tool && t.tool === 'ink' ? undefined : t.tip} onClick={() => pick(t.tool)}>
               {t.icon}
             </button>
             {t.tool === 'ink' && tool === 'ink' && <InkPanel />}
           </span>
         ))}
-        <button className="tool-btn" data-tip="Image" onClick={() => fileRef.current?.click()}>
+        <button className="tool-btn" title="Image: pick a picture from your Mac" onClick={() => fileRef.current?.click()}>
           <Image size={19} />
         </button>
         <div className="sep" />
-        <button className="tool-btn" data-tip="Fit board (⌘0)" onClick={() => flow.fitView({ padding: 0.12, duration: 400 })}>
+        <button className="tool-btn" title="Fit the board (⌘0)" onClick={() => flow.fitView({ padding: 0.12, duration: 400 })}>
           <Maximize2 size={18} />
         </button>
       </div>
@@ -397,7 +397,7 @@ function SpawnMenu({ onClose }: { onClose: () => void }) {
   const list = all ? AGENTS : AGENTS.filter((a) => FEATURED.includes(a.id))
   return (
     <div className="menu spawn-menu nowheel" style={{ top: 'calc(50% - 250px)' }}>
-      <div className="menu-title">Spawn agent</div>
+      <div className="menu-title">New agent</div>
       {list.map((a) => (
         <button
           key={a.id}
@@ -448,23 +448,23 @@ function RightToolbar() {
   const running = useStore((st) => st.loops.filter((l) => l.active && (!l.scope || l.scope === st.active)).length)
   const [todo, setTodo] = useState(false)
   const items = [
-    { icon: <Layers size={18} />, tip: 'Mission map', run: () => s.set({ modal: 'mission' }) },
-    { icon: <ListChecks size={18} />, tip: 'To-do', run: () => setTodo((v) => !v) },
-    { icon: <Orbit size={18} />, tip: 'Orchestrator', run: () => addOrchestrator() },
-    { icon: <Folder size={18} />, tip: 'Code', run: () => s.set({ modal: 'code' }) },
-    { icon: <FileText size={18} />, tip: 'Documents', run: () => s.set({ modal: 'documents' }) },
-    { icon: <FileType size={18} />, tip: 'Markdown', run: () => s.set({ modal: 'markdown' }) },
-    { icon: <Repeat size={18} />, tip: 'Loops', run: () => s.set({ modal: 'loops' }) },
+    { icon: <Layers size={18} />, tip: 'Mission map: all your agents at a glance', run: () => s.set({ modal: 'mission' }) },
+    { icon: <ListChecks size={18} />, tip: 'To-do: checklist, board or calendar', run: () => setTodo((v) => !v) },
+    { icon: <Orbit size={18} />, tip: 'Orchestrator: give orders to several agents', run: () => addOrchestrator() },
+    { icon: <Folder size={18} />, tip: 'Code: browse and edit the files of this project', run: () => s.set({ modal: 'code' }) },
+    { icon: <FileText size={18} />, tip: 'Documents: have your agent write docs about this project', run: () => s.set({ modal: 'documents' }) },
+    { icon: <FileType size={18} />, tip: 'Markdown: read and edit the notes of this project', run: () => s.set({ modal: 'markdown' }) },
+    { icon: <Repeat size={18} />, tip: 'Loops: repeat an instruction automatically', run: () => s.set({ modal: 'loops' }) },
   ]
   return (
     <div className="toolbar right">
       {items.map((i) => (
         <span key={i.tip} style={{ position: 'relative', display: 'grid' }}>
-          <button className={`tool-btn ${i.tip === 'To-do' && todo ? 'on' : ''}`} data-tip={i.tip === 'To-do' && todo ? undefined : i.tip} onClick={i.run}>
+          <button className={`tool-btn ${i.tip.startsWith('To-do') && todo ? 'on' : ''}`} title={i.tip.startsWith('To-do') && todo ? undefined : i.tip} onClick={i.run}>
             {i.icon}
-            {i.tip === 'Loops' && running > 0 && <span className="tool-badge">{running}</span>}
+            {i.tip.startsWith('Loops') && running > 0 && <span className="tool-badge">{running}</span>}
           </button>
-          {i.tip === 'To-do' && todo && <TodoMenu onClose={() => setTodo(false)} />}
+          {i.tip.startsWith('To-do') && todo && <TodoMenu onClose={() => setTodo(false)} />}
         </span>
       ))}
     </div>
@@ -498,11 +498,11 @@ function Zoom() {
   const flow = useReactFlow()
   return (
     <div className="pill zoom">
-      <button className="icon-btn sm" onClick={() => flow.zoomOut({ duration: 200 })}>
+      <button className="icon-btn sm" title="Zoom out" onClick={() => flow.zoomOut({ duration: 200 })}>
         <Minus size={14} />
       </button>
-      <span onDoubleClick={() => flow.zoomTo(1, { duration: 250 })}>{Math.round(zoom * 100)}%</span>
-      <button className="icon-btn sm" onClick={() => flow.zoomIn({ duration: 200 })}>
+      <span title="Double-click for 100%" onDoubleClick={() => flow.zoomTo(1, { duration: 250 })}>{Math.round(zoom * 100)}%</span>
+      <button className="icon-btn sm" title="Zoom in" onClick={() => flow.zoomIn({ duration: 200 })}>
         <Plus size={14} />
       </button>
     </div>

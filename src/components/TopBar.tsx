@@ -36,12 +36,12 @@ export function TopBar() {
 
   return (
     <div className="topbar">
-      <button className="pill" onClick={s.goHome}>
+      <button className="pill" title="Back to your projects: agents keep running" onClick={s.goHome}>
         <ArrowLeft size={16} /> Back to home
       </button>
 
       <div className="pill tabs" style={{ position: 'relative' }}>
-        <button className="project" onClick={() => setProjMenu((v) => !v)}>
+        <button className="project" title="Switch project" onClick={() => setProjMenu((v) => !v)}>
           <Folder size={15} fill="currentColor" strokeWidth={1.5} /> {p.name} <ChevronDown size={14} color="var(--muted)" />
         </button>
         {p.workspaces.map((w) => (
@@ -67,6 +67,7 @@ export function TopBar() {
             <span className="count">{consoles(w.nodes).length}</span>
             <span
               className="x"
+              title="Close this workspace"
               onClick={(e) => {
                 e.stopPropagation()
                 s.closeWorkspace(w.id)
@@ -113,16 +114,16 @@ export function TopBar() {
         )}
       </div>
 
-      <button className="pill" onClick={s.closeProject}>
+      <button className="pill" title="Close this project" onClick={s.closeProject}>
         <X size={15} /> Close
       </button>
 
       <span className="spacer" />
 
-      <span className="pill" title="Running consoles">
+      <span className="pill" title="Agents running right now">
         <span className="dot" style={{ background: 'var(--live)', width: 7, height: 7 }} /> {live} <span className="muted">live</span>
       </span>
-      <button className="pill usage-pill" title="Usage" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
+      <button className="pill usage-pill" title="How much of your plan you have used" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
         <Info size={15} color="var(--muted)" />
         <ClaudeMark size={14} />
         {resets ? (
@@ -135,7 +136,7 @@ export function TopBar() {
           </>
         )}
       </button>
-      <button className="icon-btn" title="Mission Map" onClick={() => s.set({ modal: useStore.getState().modal === 'mission' ? null : 'mission' })}>
+      <button className="icon-btn" title="Mission map: all your agents at a glance" onClick={() => s.set({ modal: useStore.getState().modal === 'mission' ? null : 'mission' })}>
         <Briefcase size={17} />
       </button>
       <button className="icon-btn" title="Settings" onClick={() => s.set({ modal: 'settings' })}>

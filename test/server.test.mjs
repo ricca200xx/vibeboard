@@ -44,9 +44,12 @@ before(async () => {
   assert.ok(await until(async () => (await fetch(BASE + '/api/sessions').catch(() => null))?.ok), 'server did not start')
 })
 
-after(() => {
+after(async () => {
+  // The server and its shells write to HOME until they are gone: removing it earlier races them.
+  const gone = new Promise((r) => server.once('exit', r))
   server.kill('SIGTERM')
-  fs.rmSync(HOME, { recursive: true, force: true })
+  await gone
+  fs.rmSync(HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 
 test('rejects foreign origins and hosts', async () => {

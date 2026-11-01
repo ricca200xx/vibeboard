@@ -230,24 +230,23 @@ button.pill:hover {
   background: var(--line);
   margin: 2px 6px;
 }
-.tool-btn[data-tip]:hover::after {
-  content: attr(data-tip);
-  position: absolute;
-  left: calc(100% + 12px);
-  top: 50%;
-  transform: translateY(-50%);
-  background: var(--panel-2);
-  border: 1px solid var(--line-2);
+.hover-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 200;
+  max-width: 280px;
   padding: 5px 9px;
   border-radius: 8px;
-  font-size: 12px;
-  white-space: nowrap;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
   color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
   pointer-events: none;
-}
-.toolbar.right .tool-btn[data-tip]:hover::after {
-  left: auto;
-  right: calc(100% + 12px);
+  opacity: 0;
+  transition: opacity 0.1s;
 }
 
 /* ---------- popovers / menus ---------- */
@@ -4658,6 +4657,28 @@ textarea.field {
   width: 56px;
   height: 56px;
   margin: -28px 0 0 -28px;
+}
+.petal-label {
+  position: fixed;
+  display: grid;
+  gap: 1px;
+  max-width: 280px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.petal-label b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.petal-label span {
+  color: var(--muted);
 }
 .radial .petal small {
   font-size: 9.5px;
