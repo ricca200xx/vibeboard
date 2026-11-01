@@ -4,11 +4,12 @@ import { ArrowLeft, ArrowRight, Bug, ExternalLink, Globe, Plus, RotateCw, X } fr
 import { api } from '../api'
 import { useStore, type WebData, type WebTab } from '../store'
 import { toUrl } from '../../shared/url.js'
+import { parseSize, Popover, SizeMenu } from './SizeMenu'
 
 const uid = () => crypto.randomUUID().slice(0, 8)
 // Present only inside the desktop app (desktop/preload.cjs).
 const desktop = window.vibeboardDesktop
-// Page sizes: the page is laid out at that size and scaled down to the tile.
+// Page sizes: the tile takes that size, so the page is shown exactly as big as it says.
 const VIEWPORTS: [string, string][] = [
   ['Fit', 'Fit the tile'],
   ['1920 × 1080', 'Desktop'],
@@ -18,35 +19,6 @@ const VIEWPORTS: [string, string][] = [
   ['390 × 844', 'Phone'],
 ]
 
-function SizeMenu({ current, onPick, onClose }: { current: string; onPick: (v: string) => void; onClose: () => void }) {
-  const [w, h] = current === 'Fit' ? ['', ''] : current.split(' × ')
-  const [width, setWidth] = useState(w)
-  const [height, setHeight] = useState(h)
-  const ok = (v: string) => Number(v) >= 200 && Number(v) <= 5000
-  return (
-    <div className="menu size-menu nowheel" onMouseLeave={onClose}>
-      {VIEWPORTS.map(([v, label]) => (
-        <button key={v} className={`menu-item ${current === v ? 'on' : ''}`} onClick={() => onPick(v)}>
-          <span>{label}</span>
-          <span className="mono">{v === 'Fit' ? '' : v}</span>
-        </button>
-      ))}
-      <form
-        className="size-custom"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (ok(width) && ok(height)) onPick(`${Math.round(Number(width))} × ${Math.round(Number(height))}`)
-        }}
-      >
-        <input type="number" min={200} max={5000} placeholder="width" value={width} onChange={(e) => setWidth(e.target.value)} />×
-        <input type="number" min={200} max={5000} placeholder="height" value={height} onChange={(e) => setHeight(e.target.value)} />
-        <button className="btn sm" disabled={!ok(width) || !ok(height)}>
-          Set
-        </button>
-      </form>
-    </div>
-  )
-}
 const QUICK = [
   ['Google', 'https://www.google.com'],
   ['GitHub', 'https://github.com'],
@@ -95,8 +67,18 @@ function WebTileImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
   const setTab = (tab: WebTab) => save({ tabs: tabs.map((t) => (t.id === tab.id ? tab : t)) })
   const [address, setAddress] = useState(active.url)
   const [nonce, setNonce] = useState(0)
-  const [sizes, setSizes] = useState(false)
+  const [sizes, setSizes] = useState<DOMRect | null>(null)
+  const card = useRef<HTMLDivElement>(null)
   useEffect(() => setAddress(active.url), [active.id, active.url])
+  const pickSize = (v: string) => {
+    save({ viewport: v })
+    setSizes(null)
+    if (v === 'Fit') return
+    const [w, h] = parseSize(v)
+    const bars = [...card.current!.querySelectorAll<HTMLElement>('.wt-title, .wt-tabs, .wt-nav')].reduce((n, b) => n + b.offsetHeight, 0)
+    const border = card.current!.offsetHeight - card.current!.clientHeight
+    useStore.getState().resizeNode(id, w + border, h + bars + border)
+  }
   const title = useTitle(active.url)
 
   const go = (url: string) => url && url !== active.url && setTab({ ...active, url, back: active.url ? [...active.back, active.url] : active.back, fwd: [] })
@@ -115,7 +97,7 @@ function WebTileImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
   return (
     <>
       <NodeResizer isVisible={selected} minWidth={360} minHeight={260} />
-      <div className="card-node web-tile">
+      <div ref={card} className="card-node web-tile">
         <div className="wt-title">
           <Globe size={12} color="var(--muted)" />
           <span className="t">{title}</span>
@@ -149,12 +131,14 @@ function WebTileImpl({ id, data, selected }: NodeProps<Node<WebData>>) {
             onKeyDown={(e) => e.key === 'Enter' && go(toUrl(address))}
             onFocus={(e) => e.target.select()}
           />
-          <span style={{ position: 'relative' }}>
-            <button className="vp-chip" title="Page size: the page is laid out at this size and scaled to the tile" onClick={() => setSizes((v) => !v)}>
-              {viewport}
-            </button>
-            {sizes && <SizeMenu current={viewport} onPick={(v) => (save({ viewport: v }), setSizes(false))} onClose={() => setSizes(false)} />}
-          </span>
+          <button className="vp-chip" data-popover-toggle title="Page size: pick one or type your own" onClick={(e) => setSizes(sizes ? null : e.currentTarget.getBoundingClientRect())}>
+            {viewport}
+          </button>
+          {sizes && (
+            <Popover anchor={sizes} onClose={() => setSizes(null)}>
+              <SizeMenu current={viewport} sizes={VIEWPORTS} onPick={pickSize} />
+            </Popover>
+          )}
           {active.url && desktop && (
             <button
               className="icon-btn sm"

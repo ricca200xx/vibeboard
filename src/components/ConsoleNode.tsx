@@ -2,10 +2,13 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { Check, ChevronDown, Copy, Forward, RotateCcwClock, RotateCw, X } from 'lucide-react'
+import { Check, ChevronDown, Forward, RotateCcwClock, RotateCw, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { api, ptyUrl, type Subagent } from '../api'
-import { absolute, agentColor, consoles, launchCache, useStore, workspace, type ConsoleData } from '../store'
+import { absolute, agentColor, consoles, launchCache, project, useStore, workspace, type ConsoleData } from '../store'
+import { CONSOLE_SIZE, MIN_CONSOLE } from '../layout'
+import { ContextChip, ContextDetails, useContextReport } from './ContextPanel'
+import { parseSize, Popover, SizeMenu, sizeText } from './SizeMenu'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 import { initials } from './UsagePanel'
@@ -81,12 +84,14 @@ function launchParams(id: string, epoch: number): Record<string, string> {
   if (cached) return cached
   const s = useStore.getState()
   const d = workspace(s)!.nodes.find((n) => n.id === id)!.data as ConsoleData
+  const folders = project(s)?.folders
   let params: Record<string, string> = {
     agent: d.agent,
     cwd: d.cwd,
     yolo: d.yolo ? '1' : '0',
     ...(d.lead ? { lead: '1' } : {}),
     ...(d.profile ? { profile: d.profile } : {}),
+    ...(folders?.length ? { dirs: JSON.stringify(folders) } : {}),
   }
   if (!s.live[id] && agentById(d.agent)?.resume) {
     if (d.resumeNext && d.lastSessionId) {
@@ -117,6 +122,16 @@ function exitMessage(name: string, code: number | undefined, reason: string | nu
 const ACK_EVERY = 64 * 1024
 const RETRY_FIRST_MS = 400
 const RETRY_MAX_MS = 5000
+const REFIT_AFTER_MS = 60
+// Sizes in board pixels; the terminal takes as many columns and rows as fit.
+const CONSOLE_SIZES: [string, string][] = [
+  ['480 × 320', 'Small'],
+  ['640 × 420', 'Medium'],
+  ['960 × 640', 'Large'],
+  ['1280 × 800', 'Extra large'],
+  ['1200 × 420', 'Wide'],
+  ['640 × 900', 'Tall'],
+]
 
 function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit: (reason?: string) => void }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -197,10 +212,16 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       })
       term.onResize(({ cols, rows }) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'r', cols, rows })))
     })
-    const ro = new ResizeObserver(refit)
+    // Settles first: refitting on every frame of a resize would make the CLI repaint as many times.
+    let settling: ReturnType<typeof setTimeout>
+    const ro = new ResizeObserver(() => {
+      clearTimeout(settling)
+      settling = setTimeout(refit, REFIT_AFTER_MS)
+    })
     ro.observe(el)
     return () => {
       disposed = true
+      clearTimeout(settling)
       termRef.current = null
       ro.disconnect()
       ws?.close()
@@ -342,9 +363,13 @@ export function WirePick({ id }: { id: string }) {
   )
 }
 
-function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
+function ConsoleNodeImpl({ id, data, selected, width, height }: NodeProps<Node<ConsoleData>>) {
   const live = useStore((s) => s.live[id])
-  const { updateData, restartConsole, duplicateConsole, removeNode } = useStore.getState()
+  const { updateData, restartConsole, removeNode, resizeNode } = useStore.getState()
+  const [pop, setPop] = useState<{ what: 'size' | 'context'; anchor: DOMRect } | null>(null)
+  const toggle = (what: 'size' | 'context') => (e: React.MouseEvent<HTMLElement>) => setPop(pop?.what === what ? null : { what, anchor: e.currentTarget.getBoundingClientRect() })
+  const report = useContextReport(data.agent === 'claude' ? id : '')
+  const size = sizeText(width ?? CONSOLE_SIZE.width, height ?? CONSOLE_SIZE.height)
   const [editing, setEditing] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [agentMenu, setAgentMenu] = useState(false)
@@ -372,7 +397,29 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
 
   return (
     <>
-      <NodeResizer isVisible={selected} minWidth={380} minHeight={220} />
+      <NodeResizer isVisible={selected} minWidth={MIN_CONSOLE.width} minHeight={MIN_CONSOLE.height} />
+      {pop && (
+        <Popover anchor={pop.anchor} onClose={() => setPop(null)}>
+          {pop.what === 'size' ? (
+            <SizeMenu
+              current={size}
+              sizes={CONSOLE_SIZES}
+              min={MIN_CONSOLE.height}
+              onPick={(v) => {
+                setPop(null)
+                const [w, h] = parseSize(v)
+                resizeNode(id, Math.max(w, MIN_CONSOLE.width), h)
+              }}
+            />
+          ) : (
+            report && (
+              <div className="menu ctx-pop">
+                <ContextDetails id={id} report={report} onDone={() => setPop(null)} />
+              </div>
+            )
+          )}
+        </Popover>
+      )}
       <Handle type="target" position={Position.Left} className="wire-handle" />
       <Handle type="source" position={Position.Right} className="wire-handle" title="Drag onto another console: it takes over whenever this one finishes" />
       <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 48%, var(--panel-3))` }}>
@@ -422,6 +469,10 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
             </span>
           )}
           <span className="spacer" />
+          <button className="vp-chip size-chip nodrag" data-popover-toggle title="Size of this terminal: pick one or type your own" onClick={toggle('size')}>
+            {size}
+          </button>
+          {report && <ContextChip report={report} onClick={toggle('context')} />}
           {data.agent !== 'shell' && (
             <div className="seg view-switch nodrag" title="Simple shows a conversation. Terminal shows the real thing underneath.">
               <button className={simple ? 'on' : ''} onClick={() => updateData(id, { view: 'simple' })}>
@@ -438,9 +489,6 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
           </button>
           <button className="icon-btn sm nodrag" title="Stop it and start it again" onClick={() => restartConsole(id)}>
             <RotateCw size={14} />
-          </button>
-          <button className="icon-btn sm nodrag" title="Duplicate" onClick={() => duplicateConsole(id)}>
-            <Copy size={14} />
           </button>
           <button className="icon-btn sm nodrag" title="Stop it and remove it" onClick={() => setConfirmClose(true)}>
             <X size={15} />

@@ -12,6 +12,7 @@ import pty from 'node-pty'
 import { AGENTS, agentById } from '../shared/agents.js'
 import { createLoops } from './loops.mjs'
 import { readConversation, readTranscript } from './transcript.mjs'
+import { contextReport } from '../shared/context.js'
 import headless from '@xterm/headless'
 import { screenOf } from './usage.mjs'
 import { isRefusal, parseAsk } from '../shared/prompts.js'
@@ -215,8 +216,12 @@ const LEAD_PROMPT =
   'parts that can run side by side, bring in helpers with the vibeboard create_helper tool instead of sub-agents or ' +
   'other agent launchers, so the user sees each one on the board. Small jobs you do yourself.'
 
-function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
+// Folders outside the project the person connected: the agent may work in them and knows they are there.
+const foldersPrompt = (dirs) => `The user connected these folders of their own, outside this project: ${dirs.join(', ')}. Look there when they mention their notes or earlier work.`
+
+function commandFor(agent, { id, sessionId, resume, yolo, lead, dirs = [] }) {
   const parts = [agent.cmd]
+  if (agent.addDir) for (const d of dirs) parts.push(agent.addDir, d)
   if (agent.id === 'claude') {
     if (resume && UUID.test(resume)) parts.push('--resume', resume)
     else if (sessionId && UUID.test(sessionId)) parts.push('--session-id', sessionId)
@@ -225,8 +230,10 @@ function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
     // The system-prompt line is what makes it reach for them unprompted, over other ways to run agents.
     if (lead) {
       const config = { mcpServers: { vibeboard: { type: 'http', url: `http://127.0.0.1:${PORT}/mcp/${id}` } } }
-      parts.push('--mcp-config', JSON.stringify(config), '--allowedTools', 'mcp__vibeboard', '--append-system-prompt', LEAD_PROMPT)
+      parts.push('--mcp-config', JSON.stringify(config), '--allowedTools', 'mcp__vibeboard')
     }
+    const told = [lead && LEAD_PROMPT, dirs.length && foldersPrompt(dirs)].filter(Boolean).join('\n\n')
+    if (told) parts.push('--append-system-prompt', told)
     if (yolo) parts.push('--dangerously-skip-permissions')
   } else if (agent.id === 'codex' && yolo) {
     parts.push('--dangerously-bypass-approvals-and-sandbox')
@@ -268,7 +275,7 @@ function holdOutput(s) {
   }
 }
 
-function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead, profile }) {
+function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead, profile, dirs }) {
   const agent = agentById(agentId)
   if (!agent) throw new Error(`unknown agent ${agentId}`)
   // A project folder that has gone away must not quietly become $HOME (maybe in YOLO).
@@ -279,7 +286,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
   const account = profile && agent.configEnv ? { [agent.configEnv]: path.join(PROFILES_DIR, profile) } : {}
   for (const d of Object.values(account)) fs.mkdirSync(d, { recursive: true })
   // Agents run through a login+interactive shell so they see the same PATH as iTerm.
-  const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { id, sessionId, resume, yolo, lead })}`] : ['-l']
+  const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { id, sessionId, resume, yolo, lead, dirs })}`] : ['-l']
   const p = pty.spawn(SHELL, args, {
     name: 'xterm-256color',
     cols: cols || 100,
@@ -541,6 +548,14 @@ function conversationOf(s) {
   const items = readConversation(transcriptTail(file))
   s.talk = { file, size, items }
   return items
+}
+
+function contextOf(s) {
+  const file = transcriptFile(s)
+  if (!file) return null
+  const { size } = fs.statSync(file)
+  if (s.memo?.file !== file || s.memo.size !== size) s.memo = { file, size, report: contextReport(transcriptTail(file, 8 * 1024 * 1024)) }
+  return s.memo.report
 }
 
 function conversationText(s, max = 15000) {
@@ -956,6 +971,7 @@ const server = http.createServer(async (req, res) => {
       if (action === 'conversation') {
         return json(res, 200, { items: conversationOf(s) })
       }
+      if (action === 'context') return json(res, 200, { report: contextOf(s) })
     }
     if (route === 'ls') {
       const dir = url.searchParams.get('path') || os.homedir()
@@ -1159,6 +1175,17 @@ function attachEvents(ws) {
   ws.on('close', () => eventClients.delete(ws))
 }
 
+// A connected folder that has gone away (an unplugged disk) must not stop the agent from starting.
+function connectedFolders(raw) {
+  if (!raw) return []
+  try {
+    const dirs = JSON.parse(raw)
+    return Array.isArray(dirs) ? dirs.filter(isDir) : []
+  } catch {
+    return []
+  }
+}
+
 function attachPty(ws, q) {
   const id = q.get('id')
   if (!id || !/^[\w-]{1,64}$/.test(id)) return ws.close()
@@ -1178,6 +1205,7 @@ function attachPty(ws, q) {
         yolo: q.get('yolo') === '1',
         lead: q.get('lead') === '1',
         profile: q.get('profile') || undefined,
+        dirs: connectedFolders(q.get('dirs')),
       })
     } catch (e) {
       ws.send(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`)

@@ -92,10 +92,10 @@ export function SettingsModal() {
             </div>
           </div>
           <div className="toggle-row">
-            <button className={`toggle ${settings.simpleView !== false ? 'on' : ''}`} onClick={() => patch({ simpleView: settings.simpleView === false })} />
+            <button className={`toggle ${settings.simpleView === true ? 'on' : ''}`} onClick={() => patch({ simpleView: settings.simpleView !== true })} />
             <span>
               New agents open in the simple view
-              <div style={{ color: 'var(--muted)', fontSize: 12 }}>A conversation and plain buttons. The terminal is always one click away.</div>
+              <div style={{ color: 'var(--muted)', fontSize: 12 }}>A conversation and plain buttons, for those who prefer not to use a terminal. Each agent can switch at any time.</div>
             </span>
           </div>
           <div className="toggle-row">

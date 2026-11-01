@@ -2,6 +2,7 @@
 import type { Node } from '@xyflow/react'
 
 export const CONSOLE_SIZE = { width: 640, height: 420 }
+export const MIN_CONSOLE = { width: 380, height: 220 }
 export const GROUP_PAD = 24
 export const GROUP_HEAD = 44
 const GROUP_GAP = 60 // room for a console's sub-agent cards above the next row
@@ -40,6 +41,17 @@ export function freeSpot(nodes: Node[], rect: { x: number; y: number; width: num
     x = hit.x + hit.width + 40
   }
   return { x, y: rect.y }
+}
+
+// The console under the pointer while others are being dragged: what a drop would group them with.
+// Nodes inside a group hold relative positions, so `abs` says where each one really is.
+export function consoleUnder(nodes: Node[], dragged: Set<string>, at: { x: number; y: number }, abs: (n: Node) => { x: number; y: number }) {
+  return nodes.find((n) => {
+    if (n.type !== 'console' || dragged.has(n.id)) return false
+    const p = abs(n)
+    const { width, height } = sizeOf(n)
+    return at.x > p.x && at.x < p.x + width && at.y > p.y && at.y < p.y + height
+  })
 }
 
 // Would a wire source -> target close a loop of hand-offs (A -> B -> A would bounce work forever)?

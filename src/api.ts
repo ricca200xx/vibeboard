@@ -38,6 +38,9 @@ export type Ask = { id: string; question: string; options: { label: string; hint
 export type ConversationItem = { kind: 'user' | 'agent' | 'step' | 'note'; text: string; failed?: boolean; pending?: boolean }
 export type LiveSession = { id: string; agent: string; status: Status; statusAt?: number; cwd: string; paused: boolean; subagents?: Subagent[]; ask?: Ask | null; activity?: string | null; started?: boolean; tick?: number }
 export type Status = 'idle' | 'working' | 'needs' | 'done'
+// What fills a Claude session's memory (shared/context.js).
+export type ContextReport = { used: number; window: number; model: string; parts: { label: string; tokens: number }[]; biggest: { label: string; tokens: number }[] }
+
 // A project folder as the Studios see it (server/files.mjs).
 export type FileEntry = { name: string; path: string; dir?: boolean; children?: FileEntry[] }
 // What a wire sends: see shared/links.js.
@@ -98,6 +101,7 @@ export const api = {
   putState: (s: unknown) => call('PUT', '/api/state', s),
   agents: (refresh = false) => call<string[]>('GET', `/api/agents${refresh ? '?refresh=1' : ''}`),
   conversation: (id: string) => call<{ items: ConversationItem[] }>('GET', `/api/pty/${id}/conversation`),
+  context: (id: string) => call<{ report: ContextReport | null }>('GET', `/api/pty/${id}/context`),
   stop: (id: string) => call('POST', `/api/pty/${id}/stop`),
   choose: (id: string, askId: string, index: number) => call('POST', `/api/pty/${id}/choose`, { askId, index }),
   sessions: () => call<LiveSession[]>('GET', '/api/sessions'),

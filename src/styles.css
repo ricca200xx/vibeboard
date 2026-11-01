@@ -2256,7 +2256,7 @@ button.link:hover {
 .wt-sec .live {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
-  color: var(--faint);
+  color: var(--muted);
 }
 .wt-sec .live.on {
   color: var(--done);
@@ -2596,7 +2596,8 @@ button.link:hover {
   z-index: 50;
   display: grid;
   place-items: center;
-  animation: fade-in 0.18s ease-out both;
+  /* Not held once finished: while it is, the sheet inside has nothing behind it to blur. */
+  animation: fade-in 0.18s ease-out;
 }
 .modal {
   background: var(--popover);
@@ -5353,12 +5354,14 @@ textarea.field {
 .cl-item:hover {
   background: rgb(var(--ink) / 0.025);
 }
+.popover {
+  position: fixed;
+  z-index: 60;
+}
 .size-menu {
-  top: 28px;
-  right: 0;
+  position: static;
   width: 250px;
   padding: 6px;
-  z-index: 6;
 }
 .size-menu .menu-item {
   display: flex;
@@ -6842,4 +6845,427 @@ body.desktop::before {
 }
 .tab {
   flex: none;
+}
+
+/* ---------- a terminal dropped on another: the target opens up to receive it ---------- */
+.react-flow__node.dragging .console {
+  box-shadow: 0 18px 50px rgb(0 0 0 / 0.42);
+}
+.react-flow__node-console.drop-target .console {
+  border-color: var(--accent);
+}
+.react-flow__node-console.drop-target .console::after {
+  content: 'Drop to make a group';
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  /* At the top: whatever is being dragged hangs below the pointer, so the top stays in sight. */
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  padding-top: 52px;
+  border-radius: inherit;
+  background: rgb(var(--accent-rgb) / 0.14);
+  backdrop-filter: blur(2px);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  animation: fade-in 0.14s ease-out both;
+  pointer-events: none;
+}
+.react-flow__node-console.drop-target.in-group .console::after {
+  content: 'Drop to join this group';
+}
+.group-node {
+  animation: group-in 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes group-in {
+  from {
+    opacity: 0;
+    transform: scale(1.03);
+  }
+}
+
+/* ---------- the head of a console: what you need now, the rest when you reach for it ---------- */
+.react-flow__node.selected .console {
+  box-shadow: 0 0 0 1px var(--accent), 0 12px 34px rgb(0 0 0 / 0.34);
+}
+.console {
+  container-type: inline-size;
+}
+.size-chip {
+  flex: none;
+  opacity: 0;
+  background: rgb(var(--ink) / 0.07);
+  color: var(--muted);
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.console:hover .size-chip,
+.react-flow__node.selected .size-chip,
+.size-chip:focus-visible {
+  opacity: 1;
+}
+.size-chip:hover {
+  color: var(--text);
+  background: rgb(var(--ink) / 0.12);
+}
+@container (max-width: 560px) {
+  .console-head .role,
+  .console-head .badge.acct {
+    display: none;
+  }
+}
+@container (max-width: 470px) {
+  .console-head .status-pill,
+  .console-head .size-chip {
+    display: none;
+  }
+}
+
+/* ---------- how full an agent's memory is ---------- */
+.ctx-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.12s, color 0.12s;
+}
+.ctx-chip:hover {
+  background: rgb(var(--ink) / 0.09);
+  color: var(--text);
+}
+.ctx-chip i,
+.ctx-meter {
+  display: block;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgb(var(--ink) / 0.13);
+}
+.ctx-chip i {
+  width: 22px;
+  height: 4px;
+}
+.ctx-chip b,
+.ctx-meter b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ctx-chip.filling,
+.ctx-meter.filling {
+  color: var(--needs);
+}
+.ctx-chip.full,
+.ctx-meter.full {
+  color: var(--accent);
+}
+.ctx-pop {
+  position: static;
+  width: 320px;
+  max-height: 460px;
+  overflow: auto;
+  padding: 14px;
+}
+.ctx-report {
+  display: grid;
+  gap: 10px;
+}
+.ctx-total {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ctx-total > b {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.ctx-total > b.filling {
+  color: var(--needs);
+}
+.ctx-total > b.full {
+  color: var(--accent);
+}
+.ctx-total span {
+  display: grid;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-total small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ctx-bar {
+  display: flex;
+  height: 8px;
+  gap: 1px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgb(var(--ink) / 0.09);
+}
+.ctx-bar i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+.ctx-parts {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+.ctx-parts li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ctx-parts li i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+}
+.ctx-parts li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+.ctx-parts li em {
+  font-style: normal;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ---------- the context panel ---------- */
+.context-tabs {
+  flex: none;
+  padding: 12px 16px 0;
+}
+.ctx-agents {
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+}
+.ctx-agent {
+  border-radius: 12px;
+  transition: background 0.14s;
+}
+.ctx-agent.open {
+  background: rgb(var(--ink) / 0.04);
+}
+.ctx-agent .ctx-report {
+  padding: 4px 12px 14px;
+  animation: fade-in 0.16s ease-out both;
+}
+.ctx-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 13.5px;
+  text-align: left;
+  transition: background 0.12s;
+}
+.ctx-agent-row:not(:disabled):hover {
+  background: rgb(var(--ink) / 0.06);
+}
+.ctx-agent-row .n {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ctx-agent-row em {
+  width: 38px;
+  font-style: normal;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-meter {
+  flex: none;
+  width: 180px;
+  height: 6px;
+  color: var(--text-2);
+}
+.memory-filters {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 16px 6px;
+}
+.memory-filters .sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--line-2);
+}
+.mem-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 99px;
+  color: var(--muted);
+  font-size: 12.5px;
+  transition: background 0.12s, color 0.12s;
+}
+.mem-filter:hover {
+  background: rgb(var(--ink) / 0.06);
+  color: var(--text);
+}
+.mem-filter.on {
+  background: rgb(var(--ink) / 0.11);
+  color: var(--text);
+}
+.mem-filter span {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.mem-filter i {
+  width: 7px;
+  height: 7px;
+  border-radius: 3px;
+}
+.folders-intro {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+}
+.folders-intro > div {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+.folders-intro b {
+  font-size: 14px;
+  font-weight: 600;
+}
+.folders-intro span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.memory-modal .modal-body > div:has(> .browser) {
+  margin: 0 16px 12px;
+}
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 10px;
+  padding: 10px;
+  border-radius: 12px;
+}
+.folder-row:hover {
+  background: rgb(var(--ink) / 0.05);
+}
+.folder-row .n {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.folder-row small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.folders-none {
+  margin: 6px 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.root-pick {
+  display: block;
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  outline: 0;
+  cursor: pointer;
+}
+
+/* ---------- what was written while the agent could not take it yet ---------- */
+.held-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  animation: fade-in 0.14s ease-out both;
+}
+.held-note button {
+  color: var(--text-2);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.connect-banner {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 6px 6px 16px;
+  border-radius: 999px;
+  background: var(--popover);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--rim), var(--shadow);
+  font-size: 13px;
+}
+
+/* ---------- day and night ---------- */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.24s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .group-node,
+  .react-flow__node-console.drop-target .console::after,
+  .held-note {
+    animation: none;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
 }

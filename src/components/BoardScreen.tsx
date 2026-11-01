@@ -8,6 +8,7 @@ import {
   useReactFlow,
   useViewport,
   type Node,
+  type OnNodeDrag,
 } from '@xyflow/react'
 import {
   Eraser,
@@ -60,6 +61,7 @@ import { LoopsModal } from './LoopsModal'
 import { MemoryCard, MemoryModal } from './MemoryModal'
 import { SettingsModal } from './Panels'
 import { themed } from '../theme'
+import { consoleUnder } from '../layout'
 import { UsagePanel } from './UsagePanel'
 
 // A card from a studio shows a plain panel for the moment its code takes to arrive.
@@ -128,6 +130,7 @@ export function BoardScreen() {
         <ResumeAllToast />
         <NoAgentToast />
         <DrawingBanner />
+        <ConnectBanner />
         <ReportVisible />
         {modal === 'mission' && <MissionMap />}
         {modal === 'loops' && <LoopsModal />}
@@ -179,6 +182,7 @@ function Board() {
 
   const place = (e: React.MouseEvent) => {
     const s = useStore.getState()
+    if (s.connecting) s.set({ connecting: null }) // clicking away ends Connect
     const pos = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY })
     if (s.tool === 'spawn') s.addConsole(s.spawnAgent, pos)
     else if (s.tool === 'note')
@@ -194,8 +198,35 @@ function Board() {
   // every dragged node is judged on its own position, not only the one under the pointer.
   // Every group touched re-flows afterwards: it grows to take a newcomer, shrinks when one
   // leaves, and a drag inside a group reorders it.
-  const onDragStop = (_: unknown, _node: Node, dragged: Node[]) => {
+  // A terminal dropped on another terminal makes a group of the two (or joins the one it is in).
+  const dropOn = (e: Parameters<OnNodeDrag>[0], dragged: Node[]) => {
+    const at = 'clientX' in e ? e : e.changedTouches[0]
+    if (!at || !dragged.every((n) => n.type === 'console')) return undefined
     const nodes = workspace(useStore.getState())!.nodes
+    const over = consoleUnder(nodes, new Set(dragged.map((n) => n.id)), flow.screenToFlowPosition({ x: at.clientX, y: at.clientY }), (n) => absolute(nodes, n))
+    return over && dragged.every((n) => n.parentId === over.parentId) && over.parentId ? undefined : over // a sibling: that only reorders the group
+  }
+  const marked = useRef<string | null>(null)
+  // On the DOM directly: this runs on every pointer move, and a re-render of the board would not be free.
+  const mark = (over: Node | null) => {
+    const id = over?.id ?? null
+    if (id === marked.current) return
+    const node = (x: string | null) => (x ? document.querySelector(`.react-flow__node[data-id="${x}"]`) : null)
+    node(marked.current)?.classList.remove('drop-target', 'in-group')
+    node(id)?.classList.add('drop-target')
+    if (over?.parentId) node(id)?.classList.add('in-group')
+    marked.current = id
+  }
+  const onDrag: OnNodeDrag = (e, _node, dragged) => mark(dropOn(e, dragged) ?? null)
+
+  const onDragStop: OnNodeDrag = (e, _node, dragged) => {
+    mark(null)
+    const nodes = workspace(useStore.getState())!.nodes
+    const over = dropOn(e, dragged)
+    if (over && !over.parentId) {
+      useStore.getState().groupNodes([over.id, ...dragged.map((n) => n.id)])
+      return
+    }
     const moves = new Map<string, Node>()
     const touched = new Set<string>()
     for (const node of dragged) {
@@ -203,9 +234,11 @@ function Board() {
       const abs = absolute(nodes, node)
       const cx = abs.x + (node.measured?.width ?? 0) / 2
       const cy = abs.y + (node.measured?.height ?? 0) / 2
-      const host = nodes.find(
-        (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
-      )
+      const host =
+        nodes.find((g) => g.id === over?.parentId) ??
+        nodes.find(
+          (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
+        )
       if (node.parentId) touched.add(node.parentId)
       if (host) touched.add(host.id)
       if (host?.id === node.parentId) continue
@@ -262,6 +295,7 @@ function Board() {
         defaultViewport={ws.viewport ?? { x: 120, y: 80, zoom: 0.9 }}
         onMoveEnd={(_, vp) => setViewport(vp)}
         onPaneClick={place}
+        onNodeDrag={onDrag}
         onNodeDragStop={onDragStop}
         onSelectionStart={leaveTyping}
         onNodeClick={(e, n) => {
@@ -298,6 +332,20 @@ function Board() {
       </ReactFlow>
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} />}
       {!ws.nodes.length && <EmptyBoard />}
+    </div>
+  )
+}
+
+// Connect covers the terminals with targets, so the way out stays in plain sight.
+function ConnectBanner() {
+  const connecting = useStore((s) => !!s.connecting)
+  if (!connecting) return null
+  return (
+    <div className="connect-banner">
+      Click the agents this orchestrator should command
+      <button className="btn primary" onClick={() => useStore.getState().set({ connecting: null })}>
+        Done
+      </button>
     </div>
   )
 }

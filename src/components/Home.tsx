@@ -86,7 +86,7 @@ function NativePicker({ onPick }: { onPick: (path: string) => void }) {
   )
 }
 
-function FolderBrowser({ onPick }: { onPick: (path: string) => void }) {
+export function FolderBrowser({ onPick, action }: { onPick: (path: string) => void; action?: string }) {
   const [dir, setDir] = useState<{ path: string; parent: string; dirs: string[]; isRepo: boolean } | null>(null)
   const [typed, setTyped] = useState('')
   const [filter, setFilter] = useState('')
@@ -109,7 +109,7 @@ function FolderBrowser({ onPick }: { onPick: (path: string) => void }) {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <div className="section-label">Open a folder</div>
+      {!action && <div className="section-label">Open a folder</div>}
       <div className="browser">
         <div className="browser-head">
           <button className="icon-btn" title="Up" onClick={() => dir && go(dir.parent)}>
@@ -127,7 +127,7 @@ function FolderBrowser({ onPick }: { onPick: (path: string) => void }) {
             <input placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
           </div>
           <button className="btn primary" onClick={() => dir && onPick(dir.path)}>
-            <Plus size={15} /> Open {dir?.isRepo ? 'repo' : 'here'}
+            <Plus size={15} /> {action ?? `Open ${dir?.isRepo ? 'repo' : 'here'}`}
           </button>
         </div>
         <div className="browser-list">

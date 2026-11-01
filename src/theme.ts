@@ -34,7 +34,9 @@ export function setThemeMode(next: ThemeMode = 'system') {
     // Private window: the setting still comes back from the board state on the next start.
   }
   window.vibeboardDesktop?.setTheme(next)
-  paint()
+  // Day and night melt into each other. Without the API the change is simply immediate.
+  if (document.startViewTransition) document.startViewTransition(paint)
+  else paint()
 }
 
 media.addEventListener('change', paint)

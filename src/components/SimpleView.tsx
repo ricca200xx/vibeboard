@@ -9,6 +9,7 @@ import type { ConsoleStatus } from './ConsoleNode'
 
 const NOT_STARTED_MS = 8000
 const drafts = new Map<string, string>() // what is being typed survives a switch to the terminal and back
+const heldPrompts = new Map<string, string>() // sent while the agent could not take it yet
 const EMPTY: ConversationItem[] = []
 
 // The sentence under the console's title: what it is doing, in plain words.
@@ -146,6 +147,9 @@ function AskCard({ id, name, ask }: { id: string; name: string; ask: Ask }) {
             {o.label}
           </button>
         ))}
+        <button className="btn ghost-plain" title="Answer it yourself in the real terminal" onClick={() => useStore.getState().updateData(id, { view: 'terminal' })}>
+          <TerminalSquare size={14} /> Terminal
+        </button>
       </div>
     </div>
   )
@@ -172,9 +176,15 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
     setTextState(v)
   }
   const [late, setLate] = useState(false)
+  const [held, setHeldState] = useState(() => heldPrompts.get(id) ?? '')
+  const setHeld = (v: string) => {
+    heldPrompts.set(id, v)
+    setHeldState(v)
+  }
   const box = useRef<HTMLTextAreaElement>(null)
   const claude = data.agent === 'claude'
   // Before its session starts, Enter would answer whatever the CLI is showing (it can mean "No, exit").
+  // So what is written meanwhile waits for its turn: the box itself is never closed to the person.
   const locked = !!ask || (claude && !started) || status === 'paused'
 
   useEffect(() => {
@@ -183,17 +193,35 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
     return () => clearTimeout(t)
   }, [claude, started, data.epoch])
 
-  const send = () => {
-    const prompt = text.trim()
-    if (!prompt || locked) return
-    useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: prompt } }))
-    if (data.resumeOffer) useStore.getState().updateData(id, { resumeOffer: false }) // writing starts fresh, as the offer says
-    setText('')
+  const showPending = (prompt: string) => useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: prompt } }))
+  const deliver = (prompt: string) => {
+    showPending(prompt)
     api.prompt(id, prompt).catch((e) => {
       setText(prompt)
-      useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: '' } }))
+      showPending('')
       useStore.getState().notify(`Could not send it: ${(e as Error).message}`)
     })
+  }
+  useEffect(() => {
+    if (!held || locked) return
+    setHeld('')
+    deliver(held)
+  }, [held, locked])
+
+  const send = () => {
+    const prompt = text.trim()
+    if (!prompt) return
+    if (data.resumeOffer) useStore.getState().updateData(id, { resumeOffer: false }) // writing starts fresh, as the offer says
+    setText('')
+    if (locked) {
+      setHeld(held ? `${held}\n${prompt}` : prompt)
+      showPending(held ? `${held}\n${prompt}` : prompt)
+    } else deliver(prompt)
+  }
+  const unhold = () => {
+    setText(held)
+    setHeld('')
+    showPending('')
   }
 
   return (
@@ -204,6 +232,14 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
         <TerminalNote id={id} text={`${data.name} is asking something that only shows in the terminal.`} />
       ) : (
         late && status !== 'stopped' && <TerminalNote id={id} text={`${data.name} has not started yet. It may need you to sign in.`} />
+      )}
+      {held && (
+        <div className="held-note">
+          <span>Goes as soon as {data.name} is ready</span>
+          <button type="button" onClick={unhold}>
+            Take it back
+          </button>
+        </div>
       )}
       <form
         className="simple-compose nodrag"
@@ -216,8 +252,7 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
           ref={box}
           rows={1}
           value={text}
-          disabled={locked}
-          placeholder={ask ? 'Answer the question above first' : status === 'paused' ? 'Paused. Resume it to continue' : locked ? 'Starting…' : `Tell ${data.name} what to do…`}
+          placeholder={ask ? 'Write now, it goes after your answer' : status === 'paused' ? 'Write now, it goes when you resume it' : `Tell ${data.name} what to do…`}
           onChange={(e) => {
             setText(e.target.value)
             e.target.style.height = 'auto'
@@ -236,7 +271,7 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
             <Square size={13} fill="currentColor" />
           </button>
         )}
-        <button className="round-btn go" title="Send" disabled={!text.trim() || locked}>
+        <button className="round-btn go" title="Send" disabled={!text.trim()}>
           <ArrowUp size={15} />
         </button>
       </form>

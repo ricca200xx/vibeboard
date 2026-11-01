@@ -51,7 +51,7 @@ type Open = { root: string; path: string; saved: string; text: string; size: num
 export function CodeStudio() {
   const p = useStore(project)!
   const close = () => useStore.getState().set({ modal: null })
-  const [roots, setRoots] = useState<string[]>([p.path])
+  const [roots, setRoots] = useState<string[]>([p.path, ...(p.folders ?? [])])
   const [trees, setTrees] = useState<Record<string, FileEntry[]>>({})
   const [file, setFile] = useState<Open>(null)
   const [error, setError] = useState<string | null>(null)

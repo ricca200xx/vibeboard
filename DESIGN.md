@@ -35,7 +35,13 @@ Warm black and ivory, not grey: the interface floats over the board in pills and
 - Selected in a segmented control is a neutral raised segment (`--seg-on`), not coral.
 - Every control with no visible word has a `title`, which `Tips` shows as a tooltip. Say what pressing it does, not what it is called.
 - Console actions appear on hover or keyboard focus. Status is always visible, as a dot and a plain word.
+- A small menu that belongs to a node (size, context) opens as a `Popover` on the page, never inside the node: it is not clipped and keeps its size at any zoom. Esc or a click away closes it.
+- A write box is never disabled. What cannot be delivered yet waits, says so, and can be taken back.
 
 ## Motion
 
 It should feel like one continuous material answering the hand. Everything uses `--spring` and only transform and opacity for movement: presses shrink a touch, menus and sheets rise into place in 0.2 to 0.3s, new consoles settle in. Reduced motion is respected.
+
+The moment that earns attention is dropping a terminal on another: the target tints and says what will happen, then both glide into a frame that settles around them. Exact sizes glide the same way, and a terminal refits only when the size has settled, so the CLI does not repaint on every frame. Day and night cross-fade with a view transition.
+
+An element that animates its opacity must not hold the end state (`both`) if something inside it uses `backdrop-filter`: while held, the inner glass has nothing behind it to blur.

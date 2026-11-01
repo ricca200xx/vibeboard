@@ -60,6 +60,7 @@ export function BottomBar() {
   const modal = useStore((s) => s.modal)
   const defaultAgent = useStore((s) => s.settings.defaultAgent)
   const [composer, setComposer] = useState(false)
+  const anyPaused = useStore((st) => consoles(workspace(st)?.nodes ?? []).some((n) => st.live[n.id]?.paused))
   const s = useStore.getState()
 
   return (
@@ -74,7 +75,7 @@ export function BottomBar() {
           <Chip
             k="group"
             label="Group"
-            hint="Put the selected agents in a group, or start a new group"
+            hint="Put the selected agents in a group, or start a new one. You can also drag one terminal onto another"
             on={composer}
             onClick={() => {
               const selected = consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected && !n.parentId)
@@ -83,9 +84,12 @@ export function BottomBar() {
             }}
           />
           <Chip k="presets" label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
-          <Chip k="pause" label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
-          <Chip k="resume" label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
-          <Chip k="memory" label="Memory" hint="Notes about this project to give to your agents" onClick={() => s.set({ modal: 'memory' })} />
+          {anyPaused ? (
+            <Chip k="resume" label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
+          ) : (
+            <Chip k="pause" label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
+          )}
+          <Chip k="memory" label="Context" hint="How full your agents are, what they should know, and connected folders such as a second brain" onClick={() => s.set({ modal: 'memory' })} />
         </div>
       </div>
       <CommandBar />

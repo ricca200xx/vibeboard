@@ -60,7 +60,8 @@ export type InkData = { paths: string[]; color: string; width?: number }
 
 export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean; scanned?: boolean }
 export type Workspace = { id: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: Viewport }
-export type Project = { path: string; name: string; workspaces: Workspace[]; activeWs: string; memories: Memory[]; openedAt: number }
+// `folders`: folders outside the project connected to it (a second brain): agents and Studios reach them.
+export type Project = { path: string; name: string; workspaces: Workspace[]; activeWs: string; memories: Memory[]; folders?: string[]; openedAt: number }
 export type Preset = { id: string; name: string; agents: string[]; label?: string }
 
 export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban' | 'shape'
@@ -115,6 +116,7 @@ type S = {
   connecting: string | null // the orchestrator whose Connect mode is on
   modal: Modal
   studioPath: string | null // the note the Markdown studio opens on
+  studioRoot: string | null // the connected folder it opens on, when not the project
   toast: string | null
   settings: Settings
   presets: Preset[]
@@ -156,6 +158,10 @@ type S = {
   spawnMany: (agents: string[], label?: string, extras?: Partial<ConsoleData>[], at?: { x: number; y: number }) => string[]
   spawnTeam: (team: TeamTemplate) => void
   groupSelected: (label?: string) => void
+  groupNodes: (ids: string[], label?: string) => string | null
+  resizeNode: (id: string, width: number, height: number) => void
+  connectFolder: (path: string) => void
+  disconnectFolder: (path: string) => void
   fitGroup: (id: string) => void
   ungroup: (id: string) => void
   moveToGroup: (id: string, gid: string | null) => void
@@ -313,8 +319,8 @@ const UNDO_TOAST_MS = 7000
 const UNDO_WINDOW_MS = 60_000
 let lastDeleted: { wsId: string; nodes: Node[]; edges: Edge[]; consoleIds: string[]; at: number } | null = null
 
-// New agents open in the simple view unless Settings says otherwise; a shell is a terminal by nature.
-const consoleView = (agent: string): ConsoleData['view'] => (agent === 'shell' || useStore.getState().settings.simpleView === false ? 'terminal' : 'simple')
+// New agents open on the real terminal, where the person has full control; Settings can make it the simple view.
+const consoleView = (agent: string): ConsoleData['view'] => (agent !== 'shell' && useStore.getState().settings.simpleView === true ? 'simple' : 'terminal')
 
 function addHelper(e: Extract<ServerEvent, { type: 'helper' }>) {
   const s = useStore.getState()
@@ -402,6 +408,7 @@ export const useStore = create<S>((set, get) => {
     connecting: null,
     modal: null,
     studioPath: null,
+    studioRoot: null,
     toast: null,
     settings: { yolo: false, fontSize: 13, defaultAgent: 'claude' },
     presets: DEFAULT_PRESETS,
@@ -643,6 +650,8 @@ export const useStore = create<S>((set, get) => {
     addConsole: (agent, center, extra, parentId, reveal = true) => {
       const id = `c-${uid()}`
       const p = project(get())!
+      // Connect mode covers every console with a target: a new agent must open ready to be typed in.
+      if (get().connecting) set({ connecting: null })
       // The account picked with "Use" in the accounts panel, while it still exists.
       const { active, profiles } = get().settings
       const account = active?.[agent] && profiles?.some((x) => x.id === active[agent]) ? active[agent] : undefined
@@ -769,14 +778,22 @@ export const useStore = create<S>((set, get) => {
     },
 
     groupSelected: (label) => {
+      const ids = workspace(get())?.nodes.filter((n) => n.selected && n.type !== 'group' && !n.parentId).map((n) => n.id) ?? []
+      if (!ids.length) return get().notify('Select consoles on the board first')
+      const gid = get().groupNodes(ids, label)
+      if (gid) setTimeout(() => get().frame([gid]), 60)
+    },
+
+    groupNodes: (list, label) => {
       const ws = workspace(get())
-      if (!ws) return
-      const picked = ws.nodes.filter((n) => n.selected && n.type !== 'group' && !n.parentId)
-      if (!picked.length) return get().notify('Select consoles on the board first')
+      if (!ws) return null
+      const ids = new Set(list)
+      // A member may be leaving another group, where its position is relative to that group.
+      const picked = ws.nodes.filter((n) => ids.has(n.id) && n.type !== 'group').map((n) => ({ ...n, position: absolute(ws.nodes, n) }))
+      if (!picked.length) return null
       // Members are re-laid in a compact grid (reading order), so the frame never swallows
       // a console that is not part of the group.
       const { slots: slot, width, height } = gridLayout(picked)
-      const ids = new Set(picked.map((n) => n.id))
       const origin = freeSpot(
         ws.nodes.filter((n) => !ids.has(n.id)),
         { x: Math.min(...picked.map((n) => n.position.x)) - GROUP_PAD, y: Math.min(...picked.map((n) => n.position.y)) - GROUP_PAD - GROUP_HEAD, width, height },
@@ -790,13 +807,39 @@ export const useStore = create<S>((set, get) => {
         style: { width, height },
         data: { label: label || `Group ${groupCount + 1}`, color: GROUP_COLORS[groupCount % GROUP_COLORS.length] },
       }
-      updateWs((w) => ({
-        ...w,
+      const left = new Set(ws.nodes.filter((n) => ids.has(n.id) && n.parentId).map((n) => n.parentId!))
+      glide()
+      updateWs((w) => {
         // Parents must come before children in React Flow's node array.
-        nodes: [group, ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, selected: false, position: slot.get(n.id)! } : n))],
-      }))
-      setTimeout(() => get().frame([gid]), 60)
+        let nodes: Node[] = [group, ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, extent: undefined, selected: false, position: slot.get(n.id)! } : n))]
+        for (const g of left) nodes = fitted(nodes, g)
+        return { ...w, nodes }
+      })
+      return gid
     },
+
+    // An exact size for a console or a web tile. It glides there, and the view follows if it no longer fits.
+    resizeNode: (id, width, height) => {
+      glide()
+      updateWs((w) => {
+        const n = w.nodes.find((x) => x.id === id)
+        if (!n) return w
+        const nodes = w.nodes.map((x) => (x.id === id ? { ...x, width, height, measured: { width, height }, style: { ...x.style, width, height } } : x))
+        return { ...w, nodes: n.parentId ? fitted(nodes, n.parentId) : nodes }
+      })
+      setTimeout(() => {
+        const flow = get().flow
+        const target = flow?.getNode(id)?.parentId ?? id // in a group, the whole group has to stay in view
+        const box = flow?.getNodesBounds([target])
+        if (!flow || !box) return
+        const tl = flow.flowToScreenPosition(box)
+        const br = flow.flowToScreenPosition({ x: box.x + box.width, y: box.y + box.height })
+        if (tl.x < 0 || tl.y < 0 || br.x > innerWidth || br.y > innerHeight) get().frame([target])
+      }, 360)
+    },
+
+    connectFolder: (path) => updateProject((p) => (p.folders?.includes(path) || p.path === path ? p : { ...p, folders: [...(p.folders ?? []), path] })),
+    disconnectFolder: (path) => updateProject((p) => ({ ...p, folders: p.folders?.filter((f) => f !== path) })),
 
     fitGroup: (id) => {
       glide()

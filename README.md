@@ -22,7 +22,7 @@ Claude Code. It types the install command into a terminal and you press Return t
 
 ## What it does
 
-- **A simple view.** Each agent can show a conversation instead of a terminal: a plain sentence about
+- **A simple view, when you want one.** New agents open on the real terminal. Each can switch to a conversation: a plain sentence about
   what it is doing, a box to write in, and buttons when it asks something, with the command it wants to
   run written out. The real terminal keeps running underneath, one click away. Claude Code gets the full
   conversation; other CLIs keep their terminal in view and get the sentence, the box and the buttons.
@@ -34,7 +34,14 @@ Claude Code. It types the install command into a terminal and you press Return t
   injected per session (your global Claude config is never touched); other agents are tracked by
   output activity.
 - **Groups and teams.** Spawn several agents at once or a ready-made team (plan → build → review…),
-  group consoles on the canvas and move them together. A group grows to fit a console dropped into it.
+  group consoles on the canvas and move them together. Drag one terminal onto another and the group makes
+  itself; a group grows to fit a console dropped into it.
+- **Exact sizes.** Pick a size for a terminal or a web page, or type your own width and height: it takes
+  that size and the terminal refits to it.
+- **Context you can read.** Each Claude shows how full its memory is. Click it to see what fills it, and
+  compact or clear it from there. The Context panel has every agent side by side.
+- **Connected folders.** A folder outside the project, such as a second brain, can be connected under
+  Context › Folders. Claude can then read and edit it (`--add-dir`) and its notes open in Markdown and Code.
 - **Hand-offs.** Drag a wire from one console to another: when the first finishes, a summary of its
   work plus its final reply becomes the next one's prompt.
 - **A lead and its helpers.** A lead console (Claude Code) can bring in helper consoles itself when a
