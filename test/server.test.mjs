@@ -39,8 +39,10 @@ const openShell = (id, cwd = HOME) =>
 const tail = async (id) => (await (await api('POST', `/api/pty/${id}/tail`, { chars: 4000 })).json()).text
 
 before(async () => {
-  // Pretend the server was launched from inside a Claude Code session.
-  const env = { ...process.env, PORT: String(PORT), HOME, CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', VIBEBOARD_NO_LLM: '1' }
+  // Pretend the server was launched from inside a Claude Code session. Consoles run zsh, the Mac's own
+  // shell, whatever shell the tests run from: bash 3.2 (CI) cannot take a pasted multi-line brief.
+  const SHELL = fs.existsSync('/bin/zsh') ? '/bin/zsh' : process.env.SHELL
+  const env = { ...process.env, SHELL, PORT: String(PORT), HOME, CLAUDECODE: '1', CLAUDE_CODE_CHILD_SESSION: '1', VIBEBOARD_NO_LLM: '1' }
   server = spawn(process.execPath, [path.join(ROOT, 'server/index.mjs')], { env, stdio: 'ignore' })
   assert.ok(await until(async () => (await fetch(BASE + '/api/sessions').catch(() => null))?.ok), 'server did not start')
 })
