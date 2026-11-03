@@ -6423,6 +6423,7 @@ body.desktop::before {
   display: flex;
   flex-direction: column;
   background: var(--term-bg);
+  container-type: size; /* the question card measures itself against it */
 }
 .simple-footer {
   flex: none;
@@ -6527,7 +6528,8 @@ body.desktop::before {
   z-index: 2;
   display: grid;
   gap: 8px;
-  max-height: 320px;
+  /* A long question scrolls inside the card instead of climbing over the status line. */
+  max-height: min(320px, calc(100cqh - 100px));
   overflow: auto;
   padding: 10px 12px;
   border: 1px solid var(--line-2);
@@ -7202,6 +7204,16 @@ body.desktop::before {
   font-size: 12px;
   font-weight: 400;
   color: var(--muted);
+}
+.folder-missing {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgb(var(--accent-rgb) / 0.14);
+  color: var(--accent);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
 }
 .folders-none {
   margin: 6px 16px;

@@ -61,7 +61,7 @@ export function MarkdownStudio() {
   const notes = useMemo(() => flatten(entries ?? []), [entries])
   const edited = !!file && file.text !== file.saved
 
-  const fail = (e: unknown) => setError((e as Error).message)
+  const fail = (e: unknown) => setError(/not a directory/.test((e as Error).message) ? 'This folder is not there any more. Disconnect it under Context › Folders, or plug its disk in.' : (e as Error).message)
   const loadTree = () => api.tree(root, 'md').then((r) => (setEntries(r.entries), flatten(r.entries)), (e) => (fail(e), [] as string[]))
   // Edits in Source are kept: they are saved before another note or another view replaces them.
   const save = async () => {

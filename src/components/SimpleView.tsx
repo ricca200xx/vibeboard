@@ -8,8 +8,9 @@ import { isRefusal } from '../../shared/prompts.js'
 import type { ConsoleStatus } from './ConsoleNode'
 
 const NOT_STARTED_MS = 8000
+const HELD_SETTLE_MS = 800
 const drafts = new Map<string, string>() // what is being typed survives a switch to the terminal and back
-const heldPrompts = new Map<string, string>() // sent while the agent could not take it yet
+const heldPrompts = new Map<string, { epoch: number; text: string }>() // sent while the agent could not take it yet, per run
 const EMPTY: ConversationItem[] = []
 
 // The sentence under the console's title: what it is doing, in plain words.
@@ -176,9 +177,13 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
     setTextState(v)
   }
   const [late, setLate] = useState(false)
-  const [held, setHeldState] = useState(() => heldPrompts.get(id) ?? '')
+  const heldNow = () => {
+    const h = heldPrompts.get(id)
+    return h?.epoch === data.epoch ? h.text : ''
+  }
+  const [held, setHeldState] = useState(heldNow)
   const setHeld = (v: string) => {
-    heldPrompts.set(id, v)
+    heldPrompts.set(id, { epoch: data.epoch, text: v })
     setHeldState(v)
   }
   const box = useRef<HTMLTextAreaElement>(null)
@@ -194,6 +199,15 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
   }, [claude, started, data.epoch])
 
   const showPending = (prompt: string) => useStore.setState((s) => ({ pendingPrompt: { ...s.pendingPrompt, [id]: prompt } }))
+  // Started again: what waited for the last run is dropped, and back in the box to send or not.
+  useEffect(() => {
+    const h = heldPrompts.get(id)
+    if (!h?.text || h.epoch === data.epoch) return
+    heldPrompts.delete(id)
+    setText(h.text)
+    setHeldState('')
+    showPending('')
+  }, [data.epoch])
   const deliver = (prompt: string) => {
     showPending(prompt)
     api.prompt(id, prompt).catch((e) => {
@@ -202,10 +216,14 @@ export function SimpleFooter({ id, data, status }: { id: string; data: ConsoleDa
       useStore.getState().notify(`Could not send it: ${(e as Error).message}`)
     })
   }
+  // A moment after it becomes free: a CLI that has just started is often still drawing its first screen.
   useEffect(() => {
     if (!held || locked) return
-    setHeld('')
-    deliver(held)
+    const t = setTimeout(() => {
+      setHeld('')
+      deliver(held)
+    }, HELD_SETTLE_MS)
+    return () => clearTimeout(t)
   }, [held, locked])
 
   const send = () => {

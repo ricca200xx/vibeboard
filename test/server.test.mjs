@@ -53,8 +53,19 @@ after(async () => {
   fs.rmSync(HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 
+// A raw request: fetch() would not let a test set Sec-Fetch-Site, as no page can.
+const status = (method, url, headers) =>
+  new Promise((resolve, reject) => http.request(BASE + url, { method, headers }, (res) => (res.resume(), resolve(res.statusCode))).on('error', reject).end())
+
 test('rejects foreign origins and hosts', async () => {
   assert.equal((await api('GET', '/api/sessions', undefined, { origin: 'https://evil.example' })).status, 403)
+  // An <img> on another site: no Origin, only Sec-Fetch-Site.
+  assert.equal(await status('GET', '/api/page-title?url=http://10.0.0.1/', { 'sec-fetch-site': 'cross-site' }), 403)
+  assert.equal(await status('GET', '/api/ports', { 'sec-fetch-site': 'same-site' }), 403)
+  assert.equal(await status('GET', '/api/sessions', { 'sec-fetch-site': 'same-origin' }), 200)
+  assert.equal(await status('GET', '/api/sessions', {}), 200) // the hooks' curl sends neither
+  assert.equal(await status('GET', '/', { 'sec-fetch-site': 'cross-site' }) === 403, false) // the page itself may be linked to
+  assert.equal(await status('GET', '/api/pty/nope/stop', {}), 404)
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws/pty?id=x&agent=shell`, { origin: 'https://evil.example' })
   const err = await new Promise((r) => ws.on('error', r))
   assert.ok(err)
@@ -103,6 +114,8 @@ test('prompts sent back to back reach the console as separate prompts', async ()
   await Promise.all([api('POST', '/api/pty/t-queue/input', { prompt: 'echo QA_$((1+1))' }), api('POST', '/api/pty/t-queue/input', { prompt: 'echo QB_$((2+2))' })])
   assert.ok(await until(async () => /QA_2\s[\s\S]*QB_4/.test(await tail('t-queue'))), 'both prompts should run')
   assert.ok(!(await tail('t-queue')).includes('QA_2echo'), 'prompts fused into one line')
+  assert.equal(await status('GET', '/api/pty/t-queue/input', {}), 405, 'a GET never types into a console')
+  assert.equal(await status('GET', '/api/pty/t-queue/stop', {}), 405)
   await api('DELETE', '/api/pty/t-queue')
   ws.close()
 })

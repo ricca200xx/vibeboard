@@ -74,6 +74,15 @@ async function restartServer() {
   }
 }
 
+// Only the board itself may use the microphone (dictation), notifications and the clipboard. A site in a
+// web tile gets nothing: Electron would otherwise grant it the camera, the microphone and the location.
+const MAY = new Set(['media', 'notifications', 'clipboard-sanitized-write', 'fullscreen'])
+const ours = (url) => typeof url === 'string' && (url === ORIGIN || url.startsWith(`${ORIGIN}/`))
+function guardPermissions() {
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, done, details) => done(MAY.has(permission) && details.isMainFrame && ours(details.requestingUrl)))
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, origin, details) => MAY.has(permission) && ours(origin) && details.isMainFrame !== false)
+}
+
 // Frames only: the app's own page keeps every protection it has.
 function allowFraming() {
   session.defaultSession.webRequest.onHeadersReceived((details, done) => {
@@ -174,6 +183,7 @@ app.on('second-instance', () => {
   win.focus()
 })
 app.whenReady().then(async () => {
+  guardPermissions()
   allowFraming()
   try {
     await ensureServer()

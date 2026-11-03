@@ -168,6 +168,15 @@ export function FoldersTab() {
   const folders = p.folders ?? []
   const desktop = window.vibeboardDesktop
   const [browsing, setBrowsing] = useState(false)
+  // A disk that is not plugged in, a folder moved or renamed: said before anyone tries to open it.
+  const [missing, setMissing] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let gone = false
+    Promise.all(folders.map((f) => api.ls(f).then(() => null, () => f))).then((r) => !gone && setMissing(new Set(r.filter((f): f is string => !!f))))
+    return () => {
+      gone = true
+    }
+  }, [folders.join('|')])
   const connect = (path: string | null) => {
     setBrowsing(false)
     if (!path) return
@@ -190,12 +199,16 @@ export function FoldersTab() {
         <div className="folder-row" key={f}>
           <FolderOpen size={17} color="var(--muted)" />
           <span className="n">
-            {folderName(f)}
-            <small>{f}</small>
+            <span>
+              {folderName(f)}
+              {missing.has(f) && <em className="folder-missing">Not found</em>}
+            </span>
+            <small>{missing.has(f) ? `${f} is not there any more. Plug its disk in, or disconnect it.` : f}</small>
           </span>
           <button
             className="btn sm"
             title="Read its notes in the Markdown studio"
+            disabled={missing.has(f)}
             onClick={() => s.set({ modal: 'markdown', studioRoot: f })}
           >
             <FileText size={13} /> Notes

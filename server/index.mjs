@@ -44,7 +44,8 @@ const LOW_WATER = 128 * 1024
 const STALL_MS = 5000 // a page that stops answering must not freeze the agent for ever
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-fs.mkdirSync(DATA_DIR, { recursive: true })
+// Yours alone: the board holds your prompts and memories.
+fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
 
 // When the server itself is started from a Claude Code terminal, its session variables
 // (child-session marker, session id, messaging token) must not leak into the consoles:
@@ -122,9 +123,13 @@ const ALLOWED_ORIGINS = new Set([
 ])
 // Browsers always send Origin on cross-site WS/POST; curl (the hooks) sends none.
 // The Host check blocks DNS-rebinding pages that resolve to 127.0.0.1.
-const isAllowed = (req) => {
+// An image, a script or a link on another site sends no Origin either, only Sec-Fetch-Site: such a
+// request never reaches the API (a GET there can make the server fetch a page or look at a port).
+const FOREIGN_FETCH = /^(cross|same)-site$/
+const isAllowed = (req, api = true) => {
   const origin = req.headers.origin
   if (origin && !ALLOWED_ORIGINS.has(origin)) return false
+  if (!origin && api && FOREIGN_FETCH.test(req.headers['sec-fetch-site'] ?? '')) return false
   return ALLOWED_HOSTS.has(req.headers.host)
 }
 
@@ -398,12 +403,26 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // Multi-line text goes in as a bracketed paste so each newline doesn't submit on its own;
 // the Enter follows after a beat, or the TUI folds it into the paste. Prompts queue per
 // console: two writers inside that beat would otherwise fuse into one prompt.
+// A CLI that is still drawing its start (plugins, tips) can drop the Return: the text then sits in its
+// box. Claude says when a prompt is taken (its UserPromptSubmit hook); without that, and only while our
+// text is still there at the bottom of the screen, Return goes once more. Never with a question on
+// screen (Return would answer it), and never over something else the person may be typing.
+const SUBMIT_WAIT_MS = 1500
+const INPUT_LINES = 8
+const stillTyped = (s, text) =>
+  new Promise((resolve) => s.screen.write('', () => resolve(screenOf(s.screen).split('\n').slice(-INPUT_LINES).join('\n').includes(text.trim().slice(0, 20)))))
+
 function sendPrompt(s, text) {
+  const busy = s.status === 'working' // a busy Claude queues the prompt: no hook until it gets to it
   s.queue = (s.queue || Promise.resolve()).then(async () => {
+    const taken = s.submits || 0
     writeTo(s, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text)
     await sleep(120)
     writeTo(s, '\r')
     await sleep(150)
+    if (!s.agent.hooks || busy || text.includes('\n')) return // a pasted block shows as "[Pasted text]", not as itself
+    await sleep(SUBMIT_WAIT_MS)
+    if (sessions.get(s.id) === s && (s.submits || 0) === taken && !s.ask && (await stillTyped(s, text))) writeTo(s, '\r')
   })
   return s.queue
 }
@@ -554,7 +573,8 @@ function contextOf(s) {
   const file = transcriptFile(s)
   if (!file) return null
   const { size } = fs.statSync(file)
-  if (s.memo?.file !== file || s.memo.size !== size) s.memo = { file, size, report: contextReport(transcriptTail(file, 8 * 1024 * 1024)) }
+  // The same 2 MB tail as the conversation: on a 189 MB transcript 8 MB took 17 ms a read, 2 MB takes 5.
+  if (s.memo?.file !== file || s.memo.size !== size) s.memo = { file, size, report: contextReport(transcriptTail(file)) }
   return s.memo.report
 }
 
@@ -806,14 +826,29 @@ function serveStatic(url, res) {
   if (file !== dist && !file.startsWith(dist + path.sep)) return json(res, 403, { error: 'forbidden' })
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dist, 'index.html')
   if (!fs.existsSync(file)) return json(res, 404, { error: 'run npm run build first' })
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' })
+  const type = MIME[path.extname(file)] || 'application/octet-stream'
+  res.writeHead(200, type === 'text/html' ? { 'content-type': type, 'content-security-policy': CSP } : { 'content-type': type })
   // The file can vanish between the check and the open while `npm run build` rewrites dist.
   fs.createReadStream(file).on('error', () => res.destroy()).pipe(res)
 }
 
 // ---------- HTTP API ----------
+const ACTS = new Set(['input', 'choose', 'stop', 'signal'])
+// The app's own page runs only its own scripts: markdown and agent output stay text even if
+// something got past DOMPurify. Web tiles may show any page.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src * data: blob:",
+  "font-src 'self' data:",
+  `connect-src 'self' ws://127.0.0.1:${PORT} ws://localhost:${PORT}`,
+  'frame-src http: https:',
+  "object-src 'none'",
+  "base-uri 'none'",
+].join('; ')
 const server = http.createServer(async (req, res) => {
-  if (!isAllowed(req)) return json(res, 403, { error: 'forbidden' })
+  if (!isAllowed(req, /^\/(api|mcp)\//.test(req.url ?? ''))) return json(res, 403, { error: 'forbidden' })
   // Everything below runs inside the try: a malformed URL from any page (`/%`, `//`) must cost
   // one 400/500, not the process and every console it owns.
   try {
@@ -849,6 +884,7 @@ const server = http.createServer(async (req, res) => {
         const idlePrompt = payload.notification_type === 'idle_prompt' || /waiting for your input/i.test(payload.message || '')
         if (payload.transcript_path) s.transcript = String(payload.transcript_path)
         if (action === 'SessionStart') s.started = true // its TUI takes input now (helpers wait for this)
+        if (action === 'UserPromptSubmit') s.submits = (s.submits || 0) + 1
         trackSubagent(s, action, payload)
         if (action === 'PreToolUse') setActivity(s, describeTool(payload.tool_name, payload.tool_input).doing)
         else if (action !== 'PostToolUse') setActivity(s, null)
@@ -911,6 +947,8 @@ const server = http.createServer(async (req, res) => {
         kill(s)
         return json(res, 200, { ok: true })
       }
+      // What acts on the console only ever comes as a POST.
+      if (ACTS.has(action) && req.method !== 'POST') return json(res, 405, { error: 'POST only' })
       const body = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
       if (action === 'input') {
         if (body.prompt) {

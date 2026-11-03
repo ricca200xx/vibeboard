@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 export const sizeText = (w: number, h: number) => `${Math.round(w)} × ${Math.round(h)}`
 export const parseSize = (v: string) => v.split(' × ').map(Number) as [number, number]
 
-// Closes on Esc or a click anywhere else: typing a custom size must survive the pointer wandering off.
+// Closes on Esc, a click elsewhere or the board scrolling: typing a custom size must survive the pointer wandering off.
 export function useClickAway(onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -14,11 +14,15 @@ export function useClickAway(onClose: () => void) {
       if (!ref.current?.contains(t) && !t.closest?.('[data-popover-toggle]')) onClose()
     }
     const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    // The board scrolls under a menu that stays put: it would end up pointing at nothing.
+    const scroll = (e: WheelEvent) => !ref.current?.contains(e.target as Node) && onClose()
     addEventListener('pointerdown', away, true)
     addEventListener('keydown', key)
+    addEventListener('wheel', scroll, { capture: true, passive: true })
     return () => {
       removeEventListener('pointerdown', away, true)
       removeEventListener('keydown', key)
+      removeEventListener('wheel', scroll, true)
     }
   }, [])
   return ref

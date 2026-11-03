@@ -3,6 +3,7 @@
 import { isMainThread, parentPort, Worker } from 'node:worker_threads'
 import fs from 'node:fs'
 import path from 'node:path'
+import readline from 'node:readline'
 import pty from 'node-pty'
 import headless from '@xterm/headless'
 
@@ -52,27 +53,28 @@ export function modelName(id) {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : String(id)
 }
 
-// One log file -> tokens per local day [input, output, cache], requests per model, first and last timestamp.
-export function claudeLog(text) {
+// One log file, fed a line at a time -> tokens per local day [input, output, cache], requests per
+// model, first and last timestamp. Line by line: a transcript can be hundreds of MB.
+function claudeLines() {
   const days = {}
   const models = {}
   const seen = new Set() // one line per content block, all carrying the same message usage
   let first = null
   let last = null
-  for (const line of text.split('\n')) {
-    if (!line.includes('"usage"')) continue
+  const add = (line) => {
+    if (!line.includes('"usage"')) return
     let e
     try {
       e = JSON.parse(line)
     } catch {
-      continue
+      return
     }
     const u = e.message?.usage
     const day = u && e.timestamp && localDay(e.timestamp)
-    if (!day) continue
+    if (!day) return
     const id = e.message.id || e.requestId
     if (id) {
-      if (seen.has(id)) continue
+      if (seen.has(id)) return
       seen.add(id)
     }
     const d = (days[day] ||= [0, 0, 0])
@@ -83,28 +85,28 @@ export function claudeLog(text) {
     first ??= e.timestamp
     last = e.timestamp
   }
-  return { days, models, first, last }
+  return { add, done: () => ({ days, models, first, last }) }
 }
 
 // Codex rollouts: `token_count` events carry the turn's usage; cached input is part of input there.
-export function codexLog(text) {
+function codexLines() {
   const days = {}
   const models = {}
   let model = null
   let first = null
   let last = null
-  for (const line of text.split('\n')) {
-    if (!line.includes('"token_count"') && !line.includes('"turn_context"')) continue
+  const add = (line) => {
+    if (!line.includes('"token_count"') && !line.includes('"turn_context"')) return
     let e
     try {
       e = JSON.parse(line)
     } catch {
-      continue
+      return
     }
     if (e.type === 'turn_context' && e.payload?.model) model = e.payload.model
     const u = e.payload?.type === 'token_count' ? e.payload.info?.last_token_usage : null
     const day = u && e.timestamp && localDay(e.timestamp)
-    if (!day) continue
+    if (!day) return
     const cached = u.cached_input_tokens || 0
     const d = (days[day] ||= [0, 0, 0])
     d[0] += Math.max(0, (u.input_tokens || 0) - cached)
@@ -114,7 +116,21 @@ export function codexLog(text) {
     first ??= e.timestamp
     last = e.timestamp
   }
-  return { days, models, first, last }
+  return { add, done: () => ({ days, models, first, last }) }
+}
+
+const whole = (make) => (text) => {
+  const p = make()
+  for (const line of text.split('\n')) p.add(line)
+  return p.done()
+}
+export const claudeLog = whole(claudeLines)
+export const codexLog = whole(codexLines)
+
+async function readLog(file, make) {
+  const p = make()
+  for await (const line of readline.createInterface({ input: fs.createReadStream(file, 'utf8'), crlfDelay: Infinity })) p.add(line)
+  return p.done()
 }
 
 async function jsonlFiles(dir, out = []) {
@@ -134,7 +150,7 @@ async function jsonlFiles(dir, out = []) {
 
 // ---------- tokens from local logs (async, cached per file on mtime+size) ----------
 const fileCache = new Map()
-async function scan(dirs, parse) {
+async function scan(dirs, make) {
   const agg = { days: {}, models: {}, sessions: 0, longestMs: 0, first: null }
   for (const base of dirs) {
     for (const file of await jsonlFiles(base)) {
@@ -147,7 +163,11 @@ async function scan(dirs, parse) {
       const key = `${st.mtimeMs}:${st.size}`
       let entry = fileCache.get(file)
       if (entry?.key !== key) {
-        entry = { key, ...parse(await fs.promises.readFile(file, 'utf8')) }
+        try {
+          entry = { key, ...(await readLog(file, make)) }
+        } catch {
+          continue // gone or unreadable between the listing and the read
+        }
         fileCache.set(file, entry)
       }
       if (!entry.first) continue
@@ -285,7 +305,7 @@ export function createUsage({ dataDir, env, shell, claudeDirs, codexDirs, profil
 if (!isMainThread) {
   parentPort.on('message', async ({ claude, codex }) => {
     try {
-      parentPort.postMessage({ result: { claude: await scan(claude, claudeLog), codex: await scan(codex, codexLog), scannedAt: Date.now() } })
+      parentPort.postMessage({ result: { claude: await scan(claude, claudeLines), codex: await scan(codex, codexLines), scannedAt: Date.now() } })
     } catch (e) {
       parentPort.postMessage({ error: e.message })
     }

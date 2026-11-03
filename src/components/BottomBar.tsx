@@ -265,7 +265,7 @@ function Presets() {
   )
 }
 
-type Recognition = { start: () => void; stop: () => void; onresult: (e: any) => void; onend: () => void; interimResults: boolean; continuous: boolean; lang: string }
+type Recognition = { start: () => void; stop: () => void; onresult: (e: any) => void; onend: () => void; onerror: (e: { error: string }) => void; interimResults: boolean; continuous: boolean; lang: string }
 
 // Browser dictation into a text field: what is said is appended to what was typed.
 // start() says whether dictation began (it is missing in some browsers).
@@ -285,6 +285,13 @@ export function useDictation(text: string, setText: (t: string) => void) {
     const base = text ? `${text} ` : ''
     rec.onresult = (e) => setText(base + [...e.results].map((r: any) => r[0].transcript).join(''))
     rec.onend = () => setListening(false)
+    // The desktop app has no access to the browser's speech service: the Mac's own dictation works in any field.
+    rec.onerror = (e: { error: string }) => {
+      setListening(false)
+      if (e.error === 'no-speech' || e.error === 'aborted') return
+      const why = e.error === 'not-allowed' ? 'The microphone is not allowed for vibeboard.' : 'Dictation is not available here.'
+      useStore.getState().notify(`${why} Use the Mac's own dictation instead: press the fn key twice in any text field.`)
+    }
     rec.start()
     recRef.current = rec
     setListening(true)
