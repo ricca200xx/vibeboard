@@ -78,7 +78,7 @@
         "dmg"
       ],
       "identity": null,
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${productName}-mac-${arch}.${ext}",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "extendInfo": {

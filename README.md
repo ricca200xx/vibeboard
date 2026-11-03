@@ -1,235 +1,333 @@
-# vibeboard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/logo/light.svg">
+    <img alt="vibeboard" src="docs/logo/light.svg" width="320">
+  </picture>
+</p>
 
-**A board of real terminals for your coding agents, on your Mac.**
+<p align="center">
+  <a href="https://github.com/ricca200xx/vibeboard/releases/latest"><img src="https://img.shields.io/github/v/release/ricca200xx/vibeboard?style=flat&label=release" alt="Latest release"></a>
+  <a href="https://github.com/ricca200xx/vibeboard/releases"><img src="https://img.shields.io/github/downloads/ricca200xx/vibeboard/total?style=flat" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="#download"><img src="https://img.shields.io/badge/macOS-13%2B-000000?logo=apple&logoColor=white" alt="macOS 13 or later"></a>
+  <a href="#build-from-source"><img src="https://img.shields.io/badge/node-%3E%3D24-brightgreen" alt="Node.js 24 or later"></a>
+</p>
 
-![Three Claude Code agents in a group on the vibeboard canvas](docs/screenshots/board.jpg)
+<p align="center"><b>All your coding agents on one board. Real terminals, side by side.</b></p>
 
-vibeboard puts the coding agents you already use, such as Claude Code, Codex and Gemini, side by side
-on one infinite canvas. Every console is a real terminal running the real CLI, with your own sign-in and
-your own shell. You can group agents and pass work from one to the next. You can see what each one is
-doing, and what fills its memory. You do not need to be at home in a terminal: any agent can also show
-a plain conversation with buttons.
+<p align="center">
+  <a href="#download">Download</a> |
+  <a href="#quick-start">Quick start</a> |
+  <a href="#templates">Templates</a> |
+  <a href="#what-you-can-do">Features</a> |
+  <a href="#how-it-works">How it works</a> |
+  <a href="#privacy-and-security">Security</a> |
+  <a href="#build-from-source">Build from source</a>
+</p>
 
-Free and open source (MIT). Everything runs on your Mac.
+<p align="center">
+  <img src="docs/media/orchestration.gif" alt="A plan, build and review team on the vibeboard canvas: the planner writes a plan, hands it to the builder, which asks before editing a file, then hands its work to the reviewer" width="860">
+</p>
 
-## Download
+<p align="center">
+  <b>Download the Mac app:</b>
+  <a href="https://github.com/ricca200xx/vibeboard/releases/latest/download/vibeboard-mac-arm64.dmg">Apple silicon</a> ·
+  <a href="https://github.com/ricca200xx/vibeboard/releases/latest/download/vibeboard-mac-x64.dmg">Intel</a>
+</p>
 
-Get the disk image for your Mac from the [latest release](https://github.com/ricca200xx/vibeboard/releases/latest):
+vibeboard is an open-source Mac app that puts the coding agents you already use, such as Claude Code,
+Codex, Gemini CLI, Cursor and more, on one infinite canvas. Every console is a real terminal running
+the real CLI, with your own sign-in and your own shell. Agents can be grouped into teams and hand their
+work to one another. You can see what each one is doing and how full its memory is.
 
-| Your Mac | Download |
-|---|---|
-| Apple silicon (M1, M2, M3, M4…) | `vibeboard-<version>-arm64.dmg` |
-| Intel | `vibeboard-<version>-x64.dmg` |
+Not at home in a terminal? Any agent can also show a plain conversation, with buttons when it asks
+something. The real terminal keeps running underneath, one click away.
 
-Not sure which one? Open the Apple menu › **About This Mac**. If it says **Chip: Apple M…**, take
-`arm64`. If it says **Processor: Intel**, take `x64`.
+## Quick Start
 
-**You need:**
+### Install the app
 
-- macOS 13 Ventura or later.
-- At least one coding agent CLI installed, for example [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
-  If vibeboard finds none, it offers to set up Claude Code for you. It types the install command into a
-  terminal and you press Return to run it.
+1. Download the disk image for your Mac:
+   - **[Apple silicon](https://github.com/ricca200xx/vibeboard/releases/latest/download/vibeboard-mac-arm64.dmg)** (M1 and later);
+   - **[Intel](https://github.com/ricca200xx/vibeboard/releases/latest/download/vibeboard-mac-x64.dmg)**.
 
-### Install and first launch
+   Not sure which? Apple menu › **About This Mac**: **Chip: Apple M…** means Apple silicon,
+   **Processor: Intel** means Intel.
+2. Open the `.dmg` and drag **vibeboard** into **Applications**.
+3. The first time you open it, macOS says it cannot check the app, because vibeboard is not yet signed
+   with a paid Apple Developer ID. Press **Done**. Then open **System Settings › Privacy & Security**,
+   scroll down and press **Open Anyway**. You only do this once.
 
-1. Open the `.dmg` and drag **vibeboard** into **Applications**.
-2. Open vibeboard. vibeboard is not yet signed with a paid Apple Developer ID, so the first time macOS
-   says it cannot check it. Press **Done**.
-3. Open **System Settings › Privacy & Security**, scroll down and press **Open Anyway** next to vibeboard.
-4. Open it again and confirm. From then on it opens normally.
+**You need** macOS 13 Ventura or later and at least one agent CLI, for example
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code). If vibeboard finds none, it offers to set
+up Claude Code: it types the install command into a terminal and you press Return to run it.
 
-**To update**, drag the new version into Applications and replace the old one. Your boards are kept.
+**To update**, replace the app in Applications with the new one. Your boards are kept.
 
-## Getting started
+### Your first team
 
-1. **Open a project folder.** vibeboard lists your recent projects. Each project has its own boards, called workspaces.
-2. **Start an agent.** Press **New agent** at the bottom, or right-click the board. It opens in a real terminal,
-   in your project folder.
-3. **Pick a view.** Each console has **Simple | Terminal** in its header. Simple shows the conversation, a box
-   to write in and buttons when the agent asks something. Terminal is the CLI itself.
-4. **Make a group.** Drag one terminal onto another, or select several and press **Group**. Groups move,
-   resize and get orders together.
-5. **Look at the context.** Each Claude console shows how full its memory is. Click it to see what fills it.
+1. **Open a project folder.** Each project keeps its own boards, called workspaces.
+2. Press **Presets** at the bottom and pick a team, for example **Plan, build, review**. Or press
+   **New agent** for a single one.
+3. **Give the first agent the job**, in its terminal or in its simple view. When it finishes, its work
+   passes to the next agent on its own.
+4. **Answer when an agent asks.** The question shows as buttons, with the command or the edit written out.
+5. **Make your own teams.** Drag one terminal onto another to group them. Then drag the dot on a
+   console's edge onto another console to pass work along.
 
-![The simple view: an agent asks before editing a file](docs/screenshots/simple-view.jpg)
+> Try: *"Add a `shout(name)` function to src/greet.js that returns the greeting in capitals."*
+> The planner writes three steps, the builder asks before editing the file, and the reviewer checks the result.
 
-## How it works
+### From the source
 
-- The app starts a small local server on `127.0.0.1:4317`. Nothing else on your network can reach it.
-- Every console is a real pseudo-terminal (PTY) running your agent CLI through your login shell. It sees
-  the same `PATH` and sign-ins as your own terminal. Consoles keep running while you switch workspaces,
-  and they reattach with their scrollback.
-- For Claude Code, vibeboard adds its status hooks with `--settings` for each session. It reads Claude's
-  own transcript to show the conversation, the steps and how full the context is. Your global Claude
-  configuration is never changed.
-- Other agents are followed by their output: working while they print, ready when they stop.
-- A question the agent draws on screen, such as "Do you want to proceed?", becomes buttons. A button
-  only presses the keys you would press. Before it does, the server checks that the same question is
-  still on screen and that the right option is highlighted.
-- Your boards live in `~/.vibeboard/`. There is no account, no cloud and no telemetry.
+```bash
+git clone https://github.com/ricca200xx/vibeboard.git
+cd vibeboard
+npm install
+npm run desktop    # the Mac app, from the source
+```
 
-## What it does
+See [Build from source](#build-from-source) for everything else.
 
-**Board and consoles**
-- An infinite canvas with real terminals, notes, text, shapes, freehand ink, images, web pages, checklists,
-  kanban boards and calendars.
-- Several workspaces per project, each with its own board.
-- Exact sizes: pick a size for a terminal or a web page, or type width × height. The terminal refits to it.
-- Select several things and press ⌫ to close them all. **Undo** brings them back.
-- Light and dark themes, following the system or set by hand.
+## Templates
 
-**Several agents at once**
-- **Groups and ready-made teams**, such as build then review, or plan, build and review, with the work
-  already wired from one to the next.
-- **Links between agents.** Drag the dot on a console's edge onto another. Then pick how work passes:
-  - *hand the work over* when the first one finishes;
-  - *forward every reply*;
-  - *only if* a pattern appears;
-  - *review*, where the second one checks the first one's work until it says APPROVED;
-  - *shared context*.
-- **Orchestrator**: a card that sends one order to the agents and groups wired to it.
-- **A lead and its helpers**: a lead Claude console can bring in helper consoles on the board when a job
-  splits into parts. Claude's own sub-agents show as small cards under their console.
-- **Command bar**:
-  - `@Maya fix the failing test` sends a prompt to one console;
-  - `@Checkout` sends it to a whole group;
-  - plain words ("spawn three Claudes in a group called Docs") become board actions.
-- **Loops**: repeat an instruction on a schedule, when an agent goes idle or when its output matches,
-  until a limit or a goal is reached.
-- **Needs you**: a notification and a count in the window title when an agent waits for you or is done.
+Ready-made teams under **Presets**. Each one opens as a group with its roles set and its wires in place;
+every member runs your default agent, and its role travels with each hand-off it receives.
 
-**Context, memory and your other folders**
-- **Context panel**: every agent side by side with how full its memory is, and what fills it (your messages,
-  files read, commands, tools). **Compact** or **Clear** it from there.
-- **Memory**: notes about the project, written by you or scanned from the repo by an agent, sent to the
-  consoles you choose.
-- **Connected folders**: connect a folder from outside the project, such as a second brain or your notes,
-  under **Context › Folders**. Claude can then read and edit it, and knows it is there. Its notes open in
-  the Markdown and Code studios.
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/templates/plan-build-review.jpg" alt="Plan, build, review: a planner, a builder and a reviewer, wired one to the next" width="100%">
+      <br><b>Plan, build, review</b>
+      <br><sub>Planner → Builder → Reviewer. A planner breaks the job down, a builder does it, a reviewer checks it.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/templates/lead.jpg" alt="A lead and its helpers: one Claude console marked lead" width="100%">
+      <br><b>A lead and its helpers</b>
+      <br><sub>Give one agent the job. When it splits into parts, it brings helpers onto the board and combines their work.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/templates/build-review.jpg" alt="Build, then review: a builder wired to a reviewer" width="100%">
+      <br><b>Build, then review</b>
+      <br><sub>Builder → Reviewer. One agent does the work, a second checks it when it is done.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/templates/fix-test.jpg" alt="Fix, then test: a fixer wired to a tester" width="100%">
+      <br><b>Fix, then test</b>
+      <br><sub>Fixer → Tester. One agent fixes the bug, another writes and runs tests for the fix.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/templates/research-write.jpg" alt="Research, then write: a researcher wired to a writer" width="100%">
+      <br><b>Research, then write</b>
+      <br><sub>Researcher → Writer. One agent digs through the code and docs, another writes it up.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/board.jpg" alt="Your own group: three agents in a group called Checkout" width="100%">
+      <br><b>Your own</b>
+      <br><sub>Any agents, any wires. Save a mix of agents as a preset and start it again in one click.</sub>
+    </td>
+  </tr>
+</table>
 
-![What fills an agent's context](docs/screenshots/context.jpg)
+## What You Can Do
 
-**Files and git**
-- **Git without a terminal**: see what changed and the diff of each file, save a snapshot with a message
-  you or Claude write, then upload or download. Pulls are fast-forward only.
-- **Code studio**: browse and edit the project, and put a file on the board as a card.
-- **Markdown studio**: every note in the project, to read, edit, or see as a graph of their links.
-- **Documents studio**: your agent reads the repo and writes an overview, an onboarding guide, an
-  architecture page, an API reference and more. Export them as PDF.
-- **Diagrams**: right-click the board, choose "Draw a diagram of this repo", and your agent draws its architecture as
-  shapes you can move.
+- **Run many agents at once**, each in a real terminal, with your own `PATH` and sign-ins.
+- **Orchestrate them.** Wires pass work from one agent to the next:
+  - *when done*: the first one's work goes on when it finishes;
+  - *every reply*: each reply is forwarded;
+  - *only if*: the work goes on only if a pattern appears;
+  - *review*: the second one checks until it says APPROVED;
+  - *shared context*: the second one gets the first one's context once.
 
-![The Markdown studio](docs/screenshots/markdown.jpg)
+  An **Orchestrator** card sends one order to every agent wired to it. A **lead** Claude brings in
+  helpers by itself.
+- **Talk to them from one place.** In the command bar, `@Maya fix the failing test` goes to one agent and
+  `@Checkout` to a whole group. Plain words ("spawn three Claudes in a group called Docs") become board
+  actions. Hold Space to dictate.
+- **Use the simple view when you want one**: a status line, the conversation, buttons for questions, and
+  a write box that never locks. A message waits for its turn and can be taken back.
+- **See what fills their memory.** Each Claude shows how full its context is, what fills it, and offers
+  Compact and Clear. The **Context** panel puts every agent side by side.
+- **Connect your other folders.** A second brain or a notes folder outside the project, connected under
+  Context › Folders, is reachable by Claude and opens in the studios.
+- **Work with the code without a terminal**:
+  - **Git**: changes and diffs, snapshots, upload and download;
+  - **Code**, **Markdown** and **Documents** studios;
+  - **diagrams of the repo** drawn on the board.
+- **Keep them going.** Loops repeat an instruction on a schedule, when an agent goes idle, or when its
+  output matches. You get notified when an agent needs you.
+- **More**:
+  - exact sizes for terminals and web pages;
+  - web tiles with your dev servers one click away;
+  - notes, shapes and ink;
+  - kanban boards, checklists and calendars;
+  - two accounts of the same CLI side by side;
+  - a mission map of everything running;
+  - light and dark themes.
 
-**More**
-- Two accounts of the same CLI side by side (Claude Code, Codex), each with its own sign-in.
-- Resume a Claude conversation after a restart.
-- Usage: your plan's limits and the tokens used per day, read from the agents' own logs on your Mac.
-- Mission map: every agent and group at a glance.
-- Web tiles: a browser on the board, with your local dev servers one click away.
-- Dictation: hold space on the board to talk to the command bar.
+<table>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/simple-view.jpg" alt="The simple view: the agent asks before editing a file, with the change written out" width="100%">
+      <br><sub>Questions become buttons, with the edit written out.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/context.jpg" alt="The context gauge of an agent, opened: what fills its memory" width="100%">
+      <br><sub>What fills an agent's memory, and what to do about it.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/markdown.jpg" alt="The Markdown studio reading a project's notes" width="100%">
+      <br><sub>Every note in the project, or in a connected folder.</sub>
+    </td>
+    <td width="50%" align="center" valign="top">
+      <img src="docs/screenshots/light.jpg" alt="The board in the light theme" width="100%">
+      <br><sub>Light and dark, following the system.</sub>
+    </td>
+  </tr>
+</table>
 
-![The board in the light theme](docs/screenshots/light.jpg)
+## How It Works
 
-## Supported agents
+- The app starts a small server on `127.0.0.1:4317` and shows the board in a window. Nothing else on
+  your network can reach it.
+- Every console is a real pseudo-terminal running your agent CLI through your login shell.
+  - Consoles keep running while you switch workspaces.
+  - They reattach with their scrollback.
+  - A console that floods the output is paused until the screen catches up.
+- **Claude Code:**
+  - vibeboard adds its status hooks with `--settings` for each session;
+  - it reads Claude's own transcript for the conversation, the steps and the context gauge;
+  - your global Claude configuration is never changed.
+- **Other agents** are followed by their output.
+- **Questions on screen** ("Do you want to proceed?") become buttons:
+  - a button only presses the keys you would press;
+  - before it does, the server checks that the same question is still on screen and that the right option is highlighted.
+- **Hand-offs:**
+  - the next agent gets a short summary of the first one's work;
+  - its final reply goes along word for word.
+- **Your data:** boards live in `~/.vibeboard/`. No account, no cloud, no telemetry.
 
-vibeboard runs any of these when they are installed and on your `PATH`, plus a plain shell:
+## Supported Agents
 
 Claude Code · Codex · Gemini CLI · Aider · Cursor CLI · Qwen Code · OpenCode · Grok · Amp · Goose ·
-Copilot CLI · Droid · Crush · Kimi CLI · Auggie · Cline · Kilo Code · Codebuff · Continue
+Copilot CLI · Droid · Crush · Kimi CLI · Auggie · Cline · Kilo Code · Codebuff · Continue, and a plain shell.
+vibeboard runs whichever of them are installed and on your `PATH`.
 
-| | Claude Code | Other agents |
-|---|---|---|
-| Real terminal, groups, links, loops, command bar | yes | yes |
-| Buttons for the questions it asks | yes | when it draws a menu |
-| Working / Needs you / Done status | exact, from its hooks | from its output |
-| Conversation in the simple view, context meter | yes | not yet |
-| Connected folders | yes (`--add-dir`) | tell it the path |
-| Resume, lead and helpers | yes | not yet |
-| Second account | yes | Codex |
+|                                                  | **Claude Code**       | **Other agents**     |
+| ------------------------------------------------ | --------------------- | -------------------- |
+| Real terminal, groups, wires, loops, command bar | yes                   | yes                  |
+| Buttons for the questions it asks                | yes                   | when it draws a menu |
+| Working / Needs you / Done                       | exact, from its hooks | from its output      |
+| Conversation in the simple view, context gauge   | yes                   | not yet              |
+| Connected folders                                | yes (`--add-dir`)     | tell it the path     |
+| Resume, lead and helpers                         | yes                   | not yet              |
+| A second account                                 | yes                   | Codex                |
+
+## Why vibeboard?
+
+- **Real terminals, not a wrapper.** The CLI you know runs as it is, with your settings, plugins and
+  sign-in. Nothing is emulated, and the terminal is always one click away.
+- **Built for several agents.** Groups, wires, reviews and an orchestrator replace a wall of terminal tabs.
+- **Plain words for everyone.** Every control says what it does. A person who never opened a terminal
+  can follow what an agent is doing and answer it.
+- **You stay in charge.** Nothing is approved on your behalf. Auto-approve exists, and it is off unless you turn it on.
+- **Local and open.** Your Mac, your sign-ins, your files. MIT licensed.
 
 ## Keyboard
 
-| Key | What it does |
-|---|---|
-| ⌫ or Delete | Close what is selected (consoles included) |
-| ⌘Z | Bring back what was just closed |
-| ⌘0 | Fit the whole board in view |
-| Esc | Leave the current tool, menu or panel |
-| Hold Space | Dictate into the command bar (not while typing) |
-| Shift- or ⌘-click | Select several things |
-| Double-click a console's header | Show it at 100% |
-| Right-click | A menu for the board or for what is under the pointer |
+| Key                             | What it does                                     |
+| ------------------------------- | ------------------------------------------------ |
+| ⌫ or Delete                     | Close what is selected, consoles included        |
+| ⌘Z                              | Bring back what was just closed                  |
+| ⌘0                              | Fit the whole board in view                      |
+| Esc                             | Leave the current tool, menu or panel            |
+| Hold Space                      | Dictate into the command bar (not while typing)  |
+| Shift- or ⌘-click               | Select several things                            |
+| Double-click a console's header | Show it at 100%                                  |
+| Right-click                     | A menu for the board or for what is under it     |
 
-## Privacy and security
+## Privacy and Security
 
-- The server listens on `127.0.0.1` only. It accepts requests only from its own page: it checks Origin
-  and Host (which also stops DNS rebinding) and refuses requests that other websites send through images,
-  scripts or links.
-- It has no password. Any program running as you on the same Mac can drive your consoles. Do not forward
-  the port.
-- The app's page runs only its own scripts (Content-Security-Policy), and every piece of Markdown it shows
-  is sanitized.
-- Web pages inside the board are kept apart from it. In the app they cannot use your camera, microphone,
-  location or notifications.
-- Agents run with their usual permission prompts. **Auto-approve** (Claude's `--dangerously-skip-permissions`)
-  is off unless you turn it on, for all new agents or per agent.
-- Nothing is sent anywhere by vibeboard itself. The agents talk to their own providers as they always do.
-  Dictation uses the browser's speech service, which may send audio to its vendor. In the app, use the Mac's
-  own dictation instead: press fn twice.
+- **Who can reach the server:**
+  - it listens on `127.0.0.1` only and accepts requests only from its own page;
+  - it checks Origin and Host, which also stops DNS rebinding;
+  - it refuses requests that other websites send through images, scripts or links.
+- **It has no password.** Any program running as you on the same Mac can drive your consoles. Do not forward the port.
+- **The app's own page** runs only its own scripts (Content-Security-Policy). Every piece of Markdown it shows is sanitized.
+- **Web pages inside the board** are kept apart from it. In the app they cannot use your camera,
+  microphone, location or notifications.
+- **Agents keep their usual permission prompts.** **Auto-approve** (Claude's `--dangerously-skip-permissions`) is off unless you turn it on.
+- **What leaves your Mac:**
+  - vibeboard itself sends nothing anywhere; the agents talk to their own providers as they always do;
+  - dictation uses the browser's speech service, which may send audio to its vendor;
+  - in the app, use the Mac's own dictation instead: press fn twice.
 
 Found a security problem? Please report it privately through
 [GitHub's security advisories](https://github.com/ricca200xx/vibeboard/security/advisories/new), not in a public issue.
 
-## Your data, and removing vibeboard
+## Your Data and Removing vibeboard
 
-| What | Where |
-|---|---|
-| Boards, memories, loops, account profiles | `~/.vibeboard/` (a backup of the board is kept next to it) |
-| The app's window settings | `~/Library/Application Support/vibeboard/` |
-| Logs | `~/Library/Logs/vibeboard/server.log` |
+| What                                      | Where                                       |
+| ----------------------------------------- | ------------------------------------------- |
+| Boards, memories, loops, account profiles | `~/.vibeboard/` (with a backup of the board) |
+| The app's window settings                 | `~/Library/Application Support/vibeboard/`  |
+| Logs                                      | `~/Library/Logs/vibeboard/server.log`       |
 
-To remove vibeboard, quit it, move it from Applications to the Bin, and delete the three folders above.
+To remove vibeboard:
+1. Quit it.
+2. Move it from Applications to the Bin.
+3. Delete the three folders above.
+
 Your projects and your agents' own settings are not touched.
 
 ## Troubleshooting
 
-- **"vibeboard cannot be opened" / "cannot check it for malicious software"**: see
-  [Install and first launch](#install-and-first-launch). This happens once.
-- **An agent shows as "not installed"**: vibeboard looks for it in the `PATH` of your login shell. Check that
-  `which claude` (or the agent's command) works in a new Terminal window, then press **Check again**.
-- **"vibeboard could not start"**: another program is using port 4317. A second copy, or `npm run dev`, is
-  reused automatically. Otherwise quit that program, or look in the log for details.
-- **A console says the project's folder is gone**: the folder was moved or deleted. Open it again from
-  its new place.
+- **"vibeboard cannot be opened"**: see [Install the app](#install-the-app). This happens once.
+- **An agent shows as "not installed"**:
+  - vibeboard looks for it in your login shell's `PATH`;
+  - check that `which claude` (or the agent's command) works in a new Terminal window;
+  - then press **Check again**.
+- **"vibeboard could not start"**: another program is using port 4317. A second copy of vibeboard, or
+  `npm run dev`, is reused on its own. Otherwise, quit that program, or look in the log.
+- **A console says the project's folder is gone**: it was moved or deleted. Open the folder from its new place.
 - **Dictation does nothing in the app**: use the Mac's own dictation (fn twice) in the command bar.
 
-## Build from source
+## Build from Source
 
 You need Node.js 24 or later.
 
 ```bash
 npm install
 npm run dev        # server on 127.0.0.1:4317, app on http://localhost:5173
-npm test           # the test suite (starts its own server on a throwaway folder)
+npm test           # the test suite (it starts its own server in a throwaway folder)
 npm run desktop    # the Mac app, from the source
 npm run dist       # both disk images, in release/
 ```
 
-`npm run build && npm start` serves the built app on `http://127.0.0.1:4317` in your browser. In a
-browser, sites such as Google refuse to be shown inside a web tile; in the Mac app every site loads.
-If npm skipped Electron's download, fetch it once with `node node_modules/electron/install.js`.
+- `npm run build && npm start` serves the built app on `http://127.0.0.1:4317` in your browser. In a
+  browser, sites such as Google refuse to show inside a web tile; in the Mac app every site loads.
+- A tag such as `v0.2.0` builds both disk images on GitHub Actions and leaves them on a draft release.
 
-A tag such as `v0.2.0` builds both disk images on GitHub Actions and leaves them on a draft release.
+## Community
+
+- Bugs and ideas: [GitHub Issues](https://github.com/ricca200xx/vibeboard/issues)
+- Security reports: [private advisory](https://github.com/ricca200xx/vibeboard/security/advisories/new)
+- Contributions: pull requests are welcome. Run `npm test` before you open one.
 
 ## Credits
 
-The agents' marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons) (MIT). They remain the
-trademarks of their owners and only name the tool a console runs; see `src/assets/agents/NOTICE.md`.
-
-vibeboard is an independent project, inspired by [Symvibe](https://www.symvibe.com/). It is not affiliated
-with or endorsed by Symvibe, Apple, Anthropic or any agent's maker, and it uses no code or assets from them.
+- **Agent marks:** they come from [Lobe Icons](https://github.com/lobehub/lobe-icons) (MIT). They stay
+  the trademarks of their owners and only name the tool a console runs; see `src/assets/agents/NOTICE.md`.
+- **Independent project:** vibeboard is inspired by [Symvibe](https://www.symvibe.com/). It is not
+  affiliated with or endorsed by Symvibe, Apple, Anthropic or any agent's maker, and it uses no code or
+  assets from them.
 
 ## License
 
