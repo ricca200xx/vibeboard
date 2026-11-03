@@ -22,6 +22,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const api = (method, url, body, headers = {}) =>
   fetch(BASE + url, { method, headers: { 'content-type': 'application/json', ...headers }, body: body && JSON.stringify(body) })
 const sessions = async () => (await api('GET', '/api/sessions')).json()
+const plain = (text) => text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, '')
 const until = async (fn, ms = 8000) => {
   const t0 = Date.now()
   while (Date.now() - t0 < ms) {
@@ -202,14 +203,16 @@ test('a hand-off carries one console\'s work to another as a prompt', async () =
   const handoff = (body) => api('POST', '/api/handoff', { from: 't-from', to: 't-to', fromName: 'Maya', toName: 'Otto', ...body })
   assert.equal((await handoff({})).status, 200)
   // The brief arrives as one bracketed paste; the shell echoes it back.
-  assert.ok(await until(async () => /Hand-off from Maya[\s\S]*WORK_23_DONE/.test(await tail('t-to'))), 'brief never reached the next console')
+  // Read as text: a zsh that highlights pasted text puts a colour code between every letter.
+  const arrived = await until(async () => /Hand-off from Maya[\s\S]*WORK_23_DONE/.test(plain(await tail('t-to'))))
+  assert.ok(arrived, `brief never reached the next console. It shows: ${JSON.stringify(plain(await tail('t-to')).slice(-500))}`)
   assert.equal((await (await handoff({})).json()).duplicate, true, 'a second tab firing the same hand-off is ignored')
   assert.equal((await handoff({ to: 'nope', toName: 'Ghost' })).status, 409)
   // Other kinds of wire: a condition that does not match sends nothing, one that matches does;
   // forwarding sends what A said word for word; a reviewer that approved sends no feedback back.
   assert.equal((await (await handoff({ mode: 'reply', pattern: 'NOT_THERE' })).json()).sent, false)
   assert.equal((await (await handoff({ mode: 'reply', pattern: 'work_23' })).json()).sent, true)
-  assert.ok(await until(async () => /Maya just replied:[\s\S]*WORK_23_DONE/.test(await tail('t-to'))), 'forwarded reply never arrived')
+  assert.ok(await until(async () => /Maya just replied:[\s\S]*WORK_23_DONE/.test(plain(await tail('t-to')))), 'forwarded reply never arrived')
   a.send(JSON.stringify({ t: 'i', d: 'echo APPROVED\r' }))
   assert.ok(await until(async () => /\nAPPROVED/.test(await tail('t-from'))))
   assert.equal((await (await handoff({ mode: 'feedback' })).json()).approved, true)
