@@ -202,7 +202,9 @@ test('a hand-off carries one console\'s work to another as a prompt', async () =
   const handoff = (body) => api('POST', '/api/handoff', { from: 't-from', to: 't-to', fromName: 'Maya', toName: 'Otto', ...body })
   assert.equal((await handoff({})).status, 200)
   // The brief arrives as one bracketed paste; the shell echoes it back.
-  assert.ok(await until(async () => /Hand-off from Maya[\s\S]*WORK_23_DONE/.test(await tail('t-to'))), 'brief never reached the next console')
+  const arrived = await until(async () => /Hand-off from Maya[\s\S]*WORK_23_DONE/.test(await tail('t-to')))
+  // On a failure, what the next console did show: the runner's shell is not this machine's.
+  assert.ok(arrived, `brief never reached the next console. It shows: ${JSON.stringify((await tail('t-to')).slice(-700))}`)
   assert.equal((await (await handoff({})).json()).duplicate, true, 'a second tab firing the same hand-off is ignored')
   assert.equal((await handoff({ to: 'nope', toName: 'Ghost' })).status, 409)
   // Other kinds of wire: a condition that does not match sends nothing, one that matches does;
