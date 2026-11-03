@@ -11,7 +11,7 @@
     "desktop": "vite build && electron desktop/main.cjs",
     "test": "node --test 'test/*.test.mjs' && node server/usage.mjs && node server/scan.mjs && node server/docs.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true",
-    "dist": "vite build && electron-builder --mac --arm64 && electron-builder --mac --x64"
+    "dist": "vite build && electron-builder --mac --arm64 --publish never && electron-builder --mac --x64 --publish never"
   },
   "dependencies": {
     "@dagrejs/dagre": "3.1.1",
