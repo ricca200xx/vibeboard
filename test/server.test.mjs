@@ -9,7 +9,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import WebSocket from 'ws'
-import { readTranscript } from '../server/transcript.mjs'
+import { readConversation, readTranscript } from '../server/transcript.mjs'
+import { parseAsk } from '../shared/prompts.js'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const PORT = 4399
@@ -44,13 +45,27 @@ before(async () => {
   assert.ok(await until(async () => (await fetch(BASE + '/api/sessions').catch(() => null))?.ok), 'server did not start')
 })
 
-after(() => {
+after(async () => {
+  // The server and its shells write to HOME until they are gone: removing it earlier races them.
+  const gone = new Promise((r) => server.once('exit', r))
   server.kill('SIGTERM')
-  fs.rmSync(HOME, { recursive: true, force: true })
+  await gone
+  fs.rmSync(HOME, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
+
+// A raw request: fetch() would not let a test set Sec-Fetch-Site, as no page can.
+const status = (method, url, headers) =>
+  new Promise((resolve, reject) => http.request(BASE + url, { method, headers }, (res) => (res.resume(), resolve(res.statusCode))).on('error', reject).end())
 
 test('rejects foreign origins and hosts', async () => {
   assert.equal((await api('GET', '/api/sessions', undefined, { origin: 'https://evil.example' })).status, 403)
+  // An <img> on another site: no Origin, only Sec-Fetch-Site.
+  assert.equal(await status('GET', '/api/page-title?url=http://10.0.0.1/', { 'sec-fetch-site': 'cross-site' }), 403)
+  assert.equal(await status('GET', '/api/ports', { 'sec-fetch-site': 'same-site' }), 403)
+  assert.equal(await status('GET', '/api/sessions', { 'sec-fetch-site': 'same-origin' }), 200)
+  assert.equal(await status('GET', '/api/sessions', {}), 200) // the hooks' curl sends neither
+  assert.equal(await status('GET', '/', { 'sec-fetch-site': 'cross-site' }) === 403, false) // the page itself may be linked to
+  assert.equal(await status('GET', '/api/pty/nope/stop', {}), 404)
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws/pty?id=x&agent=shell`, { origin: 'https://evil.example' })
   const err = await new Promise((r) => ws.on('error', r))
   assert.ok(err)
@@ -99,6 +114,8 @@ test('prompts sent back to back reach the console as separate prompts', async ()
   await Promise.all([api('POST', '/api/pty/t-queue/input', { prompt: 'echo QA_$((1+1))' }), api('POST', '/api/pty/t-queue/input', { prompt: 'echo QB_$((2+2))' })])
   assert.ok(await until(async () => /QA_2\s[\s\S]*QB_4/.test(await tail('t-queue'))), 'both prompts should run')
   assert.ok(!(await tail('t-queue')).includes('QA_2echo'), 'prompts fused into one line')
+  assert.equal(await status('GET', '/api/pty/t-queue/input', {}), 405, 'a GET never types into a console')
+  assert.equal(await status('GET', '/api/pty/t-queue/stop', {}), 405)
   await api('DELETE', '/api/pty/t-queue')
   ws.close()
 })
@@ -415,4 +432,99 @@ test('studios read and write files only inside the project', async () => {
   assert.equal(fs.readFileSync(path.join(root, 'src', 'b.ts'), 'utf8'), 'saved')
   const md = await (await api('GET', `/api/files/tree?root=${encodeURIComponent(root)}&only=md`)).json()
   assert.deepEqual(md.entries.map((e) => e.name), ['README.md'])
+})
+
+test('a question is only answered while it is still the one on screen', async () => {
+  const ws = await openShell('choose-1')
+  const answer = (askId, index) => api('POST', '/api/pty/choose-1/choose', { askId, index })
+  assert.equal((await answer('nothing-asked', 0)).status, 409) // no menu on screen
+
+  const menu = 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\n'
+  ws.send(JSON.stringify({ t: 'i', d: `clear; printf '${menu}'; cat >/dev/null\r` }))
+  const ask = parseAsk('Do you want to proceed?\n❯ 1. Yes\n  2. No\n')
+  assert.ok(await until(async () => (await tail('choose-1')).includes('2. No'))) // printed, before going further
+  await sleep(300)
+
+  assert.equal((await answer('another-question', 0)).status, 409)
+  assert.equal((await answer(ask.id, 9)).status, 400)
+  // A printed menu does not move with the arrows: the option cannot be confirmed, so no Enter is sent.
+  assert.equal((await answer(ask.id, 1)).status, 409)
+  assert.doesNotMatch(await tail('choose-1'), /\^\[\[B\r?\n/)
+  assert.equal((await answer(ask.id, 0)).status, 200) // the highlighted one needs no move
+  ws.close()
+  await api('DELETE', '/api/pty/choose-1')
+})
+
+test('a damaged board file is set aside and the backup takes over', async () => {
+  const dir = path.join(HOME, '.vibeboard')
+  const good = { projects: [], settings: { fontSize: 13 }, marker: 'good' }
+  const put = (body) => api('PUT', '/api/state', body)
+  assert.equal((await put(good)).status, 200)
+  // The first save of a run has no earlier file to copy; backups happen on later saves of a good file.
+  fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'state.json.bak'))
+  fs.writeFileSync(path.join(dir, 'state.json'), '{"projects": [broken')
+  const restored = await (await api('GET', '/api/state')).json()
+  assert.equal(restored.marker, 'good')
+  assert.equal(restored.recovered, 'backup')
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith('state.json.damaged-')))
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf8')).marker, 'good')
+
+  fs.writeFileSync(path.join(dir, 'state.json'), 'nonsense')
+  fs.rmSync(path.join(dir, 'state.json.bak'))
+  assert.equal((await (await api('GET', '/api/state')).json()).recovered, 'empty')
+})
+
+test('a flooding console is paused until the page catches up, and never for ever', async () => {
+  const ws = await openShell('flood-1')
+  let got = 0
+  let ack = false
+  ws.on('message', (m) => {
+    got += m.length
+    if (ack) ws.send(JSON.stringify({ t: 'a', n: m.length }))
+  })
+  await sleep(300)
+  ws.send(JSON.stringify({ t: 'i', d: 'yes xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r' }))
+  // No acknowledgement: output stops near the high mark instead of growing without limit.
+  await sleep(1500)
+  const held = got
+  assert.ok(held > 100_000, `it should have started (${held})`)
+  assert.ok(held < 3_000_000, `it should be paused (${held})`)
+  await sleep(600)
+  assert.ok(got - held < 400_000, `still flowing while unacknowledged (${got - held})`)
+  // The page stays silent past the stall limit: the agent is let go.
+  await sleep(6500)
+  assert.ok(got > held + 300_000, 'a silent page must not freeze the process')
+  ack = true
+  ws.send(JSON.stringify({ t: 'i', d: '\x03' }))
+  await sleep(300)
+  ws.close()
+  await api('DELETE', '/api/pty/flood-1')
+})
+
+test('a transcript reads as a conversation, without the bookkeeping', () => {
+  const line = (o) => JSON.stringify(o)
+  const jsonl = [
+    line({ type: 'user', message: { content: 'fix the test' } }),
+    line({ type: 'user', isMeta: true, message: { content: 'hidden meta' } }),
+    line({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+    line({ type: 'assistant', isSidechain: true, message: { content: [{ type: 'text', text: 'a helper talking' }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'text', text: 'On it.' }, { type: 'tool_use', id: 't1', name: 'Edit', input: { file_path: '/a/auth.ts' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'rm x' } }, { type: 'tool_use', id: 't3', name: 'Bash', input: { command: 'npm test' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', is_error: true, content: "The user doesn't want to proceed" }, { type: 'tool_result', tool_use_id: 't3', is_error: true, content: 'exit code 1' }] } }),
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 't4', name: 'Read', input: { file_path: '/a/b.ts' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } }),
+    'not json',
+    line({ type: 'summary', summary: 'x' }),
+  ].join('\n')
+  assert.deepEqual(readConversation(jsonl), [
+    { kind: 'user', text: 'fix the test' },
+    { kind: 'agent', text: 'On it.' },
+    { kind: 'step', text: 'Edited auth.ts' },
+    { kind: 'step', text: 'You said no: running rm x', failed: true },
+    { kind: 'step', text: 'Failed: running npm test', failed: true },
+    { kind: 'step', text: 'Reading b.ts', pending: true },
+    { kind: 'note', text: 'Stopped here' },
+  ])
+  assert.equal(readConversation(Array(5).fill(line({ type: 'user', message: { content: 'x' } })).join('\n'), 3).length, 3)
 })

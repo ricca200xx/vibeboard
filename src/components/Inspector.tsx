@@ -2,6 +2,7 @@ import { AlignCenter, AlignLeft, AlignRight, BringToFront, Copy, Pipette, SendTo
 import type { Node } from '@xyflow/react'
 import { useStore, workspace, type NoteData, type ShapeData, type TextData } from '../store'
 import { FONTS, PAPER, SIZES } from './Nodes'
+import { themed } from '../theme'
 
 const STROKES = ['#ece8e2', '#1d1b18', '#ef4444', '#5fae6a', '#4a8bf0', '#f0773a', '#a98bfa']
 const FILLS = ['#f0553a', '#5fae6a', '#4a8bf0', '#c9a64e', '#ef6a8a', '#a98bfa']
@@ -44,7 +45,7 @@ function Swatches({ colors, value, onPick, none }: { colors: string[]; value: st
     <div className="row">
       {none && <button className={`swatch none ${value === 'none' ? 'on' : ''}`} title="None" onClick={() => onPick('none')} />}
       {colors.map((c) => (
-        <button key={c} className={`swatch ${value === c ? 'on' : ''}`} style={{ background: c }} title={c} onClick={() => onPick(c)} />
+        <button key={c} className={`swatch ${value === c ? 'on' : ''}`} style={{ background: themed(c) }} title={c} onClick={() => onPick(c)} />
       ))}
       <label className={`swatch custom ${custom ? 'on' : ''}`} style={custom ? { background: value } : undefined} title="Custom colour">
         <Pipette size={11} />

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Folder, FolderGit2, Plus, Search, X } from 'lucide-react'
+import { ArrowLeft, Folder, FolderGit2, FolderOpen, Plus, Search, X } from 'lucide-react'
 import { api } from '../api'
 import { consoles, useStore } from '../store'
 import { Spark } from './icons'
+import { ThemeToggle } from './Panels'
 
 export function Home() {
   const projects = useStore((s) => s.projects)
@@ -15,13 +16,14 @@ export function Home() {
       <div className="home-inner">
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
-            <Spark size={30} color="#f0553a" />
-            <span style={{ fontWeight: 600, fontSize: 18 }}>vibeboard</span>
+            <Spark size={26} color="var(--accent)" />
+            <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>vibeboard</span>
+            <ThemeToggle />
           </div>
           <h1>
             One board for <em>your agents</em>.
           </h1>
-          <div className="lead">Open a folder and it becomes a board of real terminals.</div>
+          <div className="lead">Open a project folder and your coding agents work side by side.</div>
         </div>
 
         {recent.length > 0 && (
@@ -67,13 +69,24 @@ export function Home() {
           </div>
         )}
 
-        <FolderBrowser onPick={openProject} />
+        {window.vibeboardDesktop ? <NativePicker onPick={openProject} /> : <FolderBrowser onPick={openProject} />}
       </div>
     </div>
   )
 }
 
-function FolderBrowser({ onPick }: { onPick: (path: string) => void }) {
+// In the desktop app the Mac's own folder window does the browsing.
+function NativePicker({ onPick }: { onPick: (path: string) => void }) {
+  return (
+    <div>
+      <button className="btn primary" onClick={() => window.vibeboardDesktop!.pickFolder().then((p) => p && onPick(p))}>
+        <FolderOpen size={15} /> Open a folder…
+      </button>
+    </div>
+  )
+}
+
+export function FolderBrowser({ onPick, action }: { onPick: (path: string) => void; action?: string }) {
   const [dir, setDir] = useState<{ path: string; parent: string; dirs: string[]; isRepo: boolean } | null>(null)
   const [typed, setTyped] = useState('')
   const [filter, setFilter] = useState('')
@@ -96,7 +109,7 @@ function FolderBrowser({ onPick }: { onPick: (path: string) => void }) {
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <div className="section-label">Open a folder</div>
+      {!action && <div className="section-label">Open a folder</div>}
       <div className="browser">
         <div className="browser-head">
           <button className="icon-btn" title="Up" onClick={() => dir && go(dir.parent)}>
@@ -114,7 +127,7 @@ function FolderBrowser({ onPick }: { onPick: (path: string) => void }) {
             <input placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} />
           </div>
           <button className="btn primary" onClick={() => dir && onPick(dir.path)}>
-            <Plus size={15} /> Open {dir?.isRepo ? 'repo' : 'here'}
+            <Plus size={15} /> {action ?? `Open ${dir?.isRepo ? 'repo' : 'here'}`}
           </button>
         </div>
         <div className="browser-list">

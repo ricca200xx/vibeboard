@@ -11,7 +11,12 @@ import { WebSocketServer } from 'ws'
 import pty from 'node-pty'
 import { AGENTS, agentById } from '../shared/agents.js'
 import { createLoops } from './loops.mjs'
-import { readTranscript } from './transcript.mjs'
+import { readConversation, readTranscript } from './transcript.mjs'
+import { contextReport } from '../shared/context.js'
+import headless from '@xterm/headless'
+import { screenOf } from './usage.mjs'
+import { isRefusal, parseAsk } from '../shared/prompts.js'
+import { describeTool } from '../shared/plain.js'
 import { createHelpers } from './helpers.mjs'
 import { createUsage } from './usage.mjs'
 import { createScans } from './scan.mjs'
@@ -31,14 +36,22 @@ const PROFILES_DIR = path.join(DATA_DIR, 'profiles')
 const PROFILE = /^[\w-]{1,40}$/
 const SHELL = process.env.SHELL || '/bin/zsh'
 const MAX_BUF = 512 * 1024
+const FLUSH_MS = 8 // output is sent in small batches: one message per chunk would flood the page
+// The page acknowledges what its terminal has drawn. Past the high mark the process is paused, as a
+// real terminal does, so `yes` or a huge `cat` cannot bury the page under minutes of backlog.
+const HIGH_WATER = 512 * 1024
+const LOW_WATER = 128 * 1024
+const STALL_MS = 5000 // a page that stops answering must not freeze the agent for ever
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-fs.mkdirSync(DATA_DIR, { recursive: true })
+// Yours alone: the board holds your prompts and memories.
+fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
 
 // When the server itself is started from a Claude Code terminal, its session variables
 // (child-session marker, session id, messaging token) must not leak into the consoles:
 // a Claude that thinks it is a child session stops saving transcripts, which breaks resume.
-const STRIP_ENV = /^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_JOB_DIR$|CLAUDE_PID$)/
+// The desktop app runs this server through its own Electron: tools started in a console must not inherit that.
+const STRIP_ENV = /^(CLAUDECODE$|CLAUDE_CODE_|CLAUDE_JOB_DIR$|CLAUDE_PID$|ELECTRON_RUN_AS_NODE$)/
 const CLEAN_ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !STRIP_ENV.test(k)))
 
 // Claude Code gets these hooks through --settings, so the user's global config stays untouched.
@@ -64,6 +77,42 @@ fs.writeFileSync(
   ),
 )
 
+// ---------- the board file ----------
+const STATE_BACKUP = STATE_FILE + '.bak'
+const BACKUP_EVERY_MS = 10 * 60_000
+let backedUpAt = 0
+
+// Copied only while the current file is known to read: a backup of a damaged file protects nothing.
+function backupState() {
+  if (Date.now() - backedUpAt < BACKUP_EVERY_MS || !fs.existsSync(STATE_FILE)) return
+  backedUpAt = Date.now()
+  try {
+    JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
+    fs.copyFileSync(STATE_FILE, STATE_BACKUP)
+  } catch (e) {
+    console.error('board backup skipped:', e.message)
+  }
+}
+
+// A damaged file is set aside, not overwritten, and the last backup takes its place.
+function readState() {
+  if (!fs.existsSync(STATE_FILE)) return {}
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
+  } catch (e) {
+    console.error('board file damaged:', e.message)
+  }
+  const kept = `${STATE_FILE}.damaged-${Date.now()}`
+  fs.renameSync(STATE_FILE, kept)
+  try {
+    const saved = JSON.parse(fs.readFileSync(STATE_BACKUP, 'utf8'))
+    fs.copyFileSync(STATE_BACKUP, STATE_FILE)
+    return { ...saved, recovered: 'backup' }
+  } catch {
+    return { recovered: 'empty' }
+  }
+}
+
 // ---------- security: only our own pages may talk to us ----------
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`])
 // The Vite dev page only in development: in production another project on :5173 must not drive the consoles.
@@ -74,9 +123,13 @@ const ALLOWED_ORIGINS = new Set([
 ])
 // Browsers always send Origin on cross-site WS/POST; curl (the hooks) sends none.
 // The Host check blocks DNS-rebinding pages that resolve to 127.0.0.1.
-const isAllowed = (req) => {
+// An image, a script or a link on another site sends no Origin either, only Sec-Fetch-Site: such a
+// request never reaches the API (a GET there can make the server fetch a page or look at a port).
+const FOREIGN_FETCH = /^(cross|same)-site$/
+const isAllowed = (req, api = true) => {
   const origin = req.headers.origin
   if (origin && !ALLOWED_ORIGINS.has(origin)) return false
+  if (!origin && api && FOREIGN_FETCH.test(req.headers['sec-fetch-site'] ?? '')) return false
   return ALLOWED_HOSTS.has(req.headers.host)
 }
 
@@ -89,7 +142,32 @@ const broadcast = (msg) => {
   for (const c of eventClients) if (c.readyState === 1) c.send(s)
 }
 
-const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, statusAt: s.statusAt, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()] })
+const summary = (s) => ({ id: s.id, agent: s.agent.id, status: s.status, statusAt: s.statusAt, cwd: s.cwd, paused: s.paused, pid: s.pty.pid, subagents: [...s.subagents.values()], ask: s.ask, activity: s.activity, started: !!s.started })
+
+// Every console also draws into an invisible screen, so a question from the agent can be read off it
+// and offered as buttons. The agents' own menus stay the source of truth.
+const readScreen = (s) => new Promise((resolve) => s.screen.write('', () => resolve(parseAsk(screenOf(s.screen)))))
+
+function publishAsk(s, ask) {
+  if (ask?.id === s.ask?.id && ask?.selected === s.ask?.selected) return
+  const fresh = ask && ask.id !== s.ask?.id
+  s.ask = ask
+  broadcast({ type: 'ask', id: s.id, ask })
+  if (fresh) setStatus(s, 'needs')
+}
+
+// Something new is in the transcript: open conversations read it again. The hook can fire a moment
+// before the line reaches the disk.
+function touchConversation(s, started = false) {
+  clearTimeout(s.talkTimer)
+  s.talkTimer = setTimeout(() => broadcast({ type: 'conversation', id: s.id, started }), started ? 0 : 200)
+}
+
+function setActivity(s, text) {
+  if (s.activity === text) return
+  s.activity = text
+  broadcast({ type: 'activity', id: s.id, text })
+}
 
 // Claude's own sub-agents (its Task/Agent tool) appear on its console while they run. PreToolUse
 // opens one, PostToolUse closes it; only the last few finished ones are kept.
@@ -143,8 +221,12 @@ const LEAD_PROMPT =
   'parts that can run side by side, bring in helpers with the vibeboard create_helper tool instead of sub-agents or ' +
   'other agent launchers, so the user sees each one on the board. Small jobs you do yourself.'
 
-function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
+// Folders outside the project the person connected: the agent may work in them and knows they are there.
+const foldersPrompt = (dirs) => `The user connected these folders of their own, outside this project: ${dirs.join(', ')}. Look there when they mention their notes or earlier work.`
+
+function commandFor(agent, { id, sessionId, resume, yolo, lead, dirs = [] }) {
   const parts = [agent.cmd]
+  if (agent.addDir) for (const d of dirs) parts.push(agent.addDir, d)
   if (agent.id === 'claude') {
     if (resume && UUID.test(resume)) parts.push('--resume', resume)
     else if (sessionId && UUID.test(sessionId)) parts.push('--session-id', sessionId)
@@ -153,8 +235,10 @@ function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
     // The system-prompt line is what makes it reach for them unprompted, over other ways to run agents.
     if (lead) {
       const config = { mcpServers: { vibeboard: { type: 'http', url: `http://127.0.0.1:${PORT}/mcp/${id}` } } }
-      parts.push('--mcp-config', JSON.stringify(config), '--allowedTools', 'mcp__vibeboard', '--append-system-prompt', LEAD_PROMPT)
+      parts.push('--mcp-config', JSON.stringify(config), '--allowedTools', 'mcp__vibeboard')
     }
+    const told = [lead && LEAD_PROMPT, dirs.length && foldersPrompt(dirs)].filter(Boolean).join('\n\n')
+    if (told) parts.push('--append-system-prompt', told)
     if (yolo) parts.push('--dangerously-skip-permissions')
   } else if (agent.id === 'codex' && yolo) {
     parts.push('--dangerously-bypass-approvals-and-sandbox')
@@ -162,7 +246,41 @@ function commandFor(agent, { id, sessionId, resume, yolo, lead }) {
   return parts.map(shq).join(' ')
 }
 
-function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead, profile }) {
+function flushOutput(s) {
+  clearTimeout(s.flushTimer)
+  s.flushTimer = null
+  if (!s.outbox) return
+  const data = s.outbox
+  s.outbox = ''
+  s.screen.write(data)
+  for (const c of s.clients) {
+    if (c.readyState !== 1) continue
+    c.send(data)
+    s.unacked.set(c, (s.unacked.get(c) ?? 0) + data.length)
+  }
+  holdOutput(s)
+}
+
+// Follows the slowest page that is attached.
+function holdOutput(s) {
+  const most = Math.max(0, ...s.unacked.values())
+  if (!s.paused_output && most > HIGH_WATER) {
+    s.paused_output = true
+    s.pty.pause()
+    s.lastAckAt = Date.now()
+    s.stallTimer = setInterval(() => {
+      if (Date.now() - s.lastAckAt < STALL_MS) return
+      s.unacked.clear()
+      holdOutput(s)
+    }, 1000)
+  } else if (s.paused_output && most < LOW_WATER) {
+    s.paused_output = false
+    clearInterval(s.stallTimer)
+    if (sessions.get(s.id) === s) s.pty.resume()
+  }
+}
+
+function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, lead, profile, dirs }) {
   const agent = agentById(agentId)
   if (!agent) throw new Error(`unknown agent ${agentId}`)
   // A project folder that has gone away must not quietly become $HOME (maybe in YOLO).
@@ -173,7 +291,7 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
   const account = profile && agent.configEnv ? { [agent.configEnv]: path.join(PROFILES_DIR, profile) } : {}
   for (const d of Object.values(account)) fs.mkdirSync(d, { recursive: true })
   // Agents run through a login+interactive shell so they see the same PATH as iTerm.
-  const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { id, sessionId, resume, yolo, lead })}`] : ['-l']
+  const args = agent.cmd ? ['-lic', `exec ${commandFor(agent, { id, sessionId, resume, yolo, lead, dirs })}`] : ['-l']
   const p = pty.spawn(SHELL, args, {
     name: 'xterm-256color',
     cols: cols || 100,
@@ -181,11 +299,26 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
     cwd: dir,
     env: { ...CLEAN_ENV, ...account, VIBEBOARD_ID: id, COLORTERM: 'truecolor', TERM_PROGRAM: 'vibeboard' },
   })
-  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
+  const screen = new headless.Terminal({ cols: cols || 100, rows: rows || 30, scrollback: 0, allowProposedApi: true })
+  const s = { id, agent, cwd: dir, yolo: !!yolo, profile, pty: p, screen, ask: null, activity: null, outbox: '', flushTimer: null, unacked: new Map(), paused_output: false, stallTimer: null, buf: '', status: 'idle', statusAt: Date.now(), clients: new Set(), paused: false, idleTimer: null, quietUntil: 0, lastInputAt: 0, lastOutputAt: 0, subagents: new Map() }
   p.onData((d) => {
     s.buf = s.buf.length + d.length > MAX_BUF ? (s.buf + d).slice(-MAX_BUF) : s.buf + d
     s.lastOutputAt = Date.now()
-    for (const c of s.clients) if (c.readyState === 1) c.send(d)
+    s.outbox += d
+    s.flushTimer ??= setTimeout(() => flushOutput(s), FLUSH_MS)
+    // A plain shell has no questions to answer: its programs' menus are its own business.
+    if (agent.cmd) {
+      clearTimeout(s.askTimer)
+      s.askTimer = setTimeout(() => {
+        if (sessions.get(id) !== s) return
+        readScreen(s).then((ask) => {
+          // A CLI that does not redraw leaves an answered menu on screen. It only counts again
+          // once the screen has moved on and the same question comes back.
+          if (!ask) s.answered = null
+          publishAsk(s, ask?.id === s.answered ? null : ask)
+        })
+      }, 150)
+    }
     // A repaint after a resize is not activity: it would flip status and re-match output triggers.
     if (Date.now() < s.quietUntil) return
     loops.onOutput(s, d)
@@ -198,6 +331,11 @@ function spawnSession({ id, agentId, cwd, cols, rows, sessionId, resume, yolo, l
   })
   p.onExit(({ exitCode }) => {
     clearTimeout(s.idleTimer)
+    clearTimeout(s.askTimer)
+    clearTimeout(s.talkTimer)
+    flushOutput(s) // the last words go out before the sockets close
+    clearInterval(s.stallTimer)
+    screen.dispose()
     sessions.delete(id)
     loops.onExit(s)
     helpers.forget(id)
@@ -256,18 +394,35 @@ function signal(s, sig) {
   broadcast({ type: 'paused', id: s.id, paused: s.paused })
 }
 
-const writeTo = (s, text) => s.pty.write(text)
+// The process can exit between the check and the write, and a prompt queue must survive that.
+const writeTo = (s, text) => {
+  if (sessions.get(s.id) === s) s.pty.write(text)
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 // Multi-line text goes in as a bracketed paste so each newline doesn't submit on its own;
 // the Enter follows after a beat, or the TUI folds it into the paste. Prompts queue per
 // console: two writers inside that beat would otherwise fuse into one prompt.
+// A CLI that is still drawing its start (plugins, tips) can drop the Return: the text then sits in its
+// box. Claude says when a prompt is taken (its UserPromptSubmit hook); without that, and only while our
+// text is still there at the bottom of the screen, Return goes once more. Never with a question on
+// screen (Return would answer it), and never over something else the person may be typing.
+const SUBMIT_WAIT_MS = 1500
+const INPUT_LINES = 8
+const stillTyped = (s, text) =>
+  new Promise((resolve) => s.screen.write('', () => resolve(screenOf(s.screen).split('\n').slice(-INPUT_LINES).join('\n').includes(text.trim().slice(0, 20)))))
+
 function sendPrompt(s, text) {
+  const busy = s.status === 'working' // a busy Claude queues the prompt: no hook until it gets to it
   s.queue = (s.queue || Promise.resolve()).then(async () => {
+    const taken = s.submits || 0
     writeTo(s, text.includes('\n') ? `\x1b[200~${text}\x1b[201~` : text)
     await sleep(120)
     writeTo(s, '\r')
     await sleep(150)
+    if (!s.agent.hooks || busy || text.includes('\n')) return // a pasted block shows as "[Pasted text]", not as itself
+    await sleep(SUBMIT_WAIT_MS)
+    if (sessions.get(s.id) === s && (s.submits || 0) === taken && !s.ask && (await stillTyped(s, text))) writeTo(s, '\r')
   })
   return s.queue
 }
@@ -281,6 +436,7 @@ function resize(s, cols, rows) {
   if (sessions.get(s.id) !== s) return // node-pty's resize throws on a dead pty
   s.quietUntil = Date.now() + 1000
   s.pty.resize(cols, rows)
+  s.screen.resize(cols, rows)
 }
 
 const loops = createLoops({ sessions, sendPrompt, broadcast, run: runCommand })
@@ -382,9 +538,49 @@ const claudeProjectDirs = () => [
 
 // What the outgoing agent did. Claude's own transcript is clean text; any other CLI only has its
 // screen, so that is used with the escape codes stripped (and has no final reply to quote).
-function conversationText(s, max = 15000) {
+// The path comes from the hook's payload, so it must lie inside Claude's own folders.
+function transcriptFile(s) {
   const file = s.transcript && path.resolve(s.transcript)
-  if (file && claudeProjectDirs().some((d) => file.startsWith(d + path.sep)) && file.endsWith('.jsonl') && fs.existsSync(file)) {
+  return file && claudeProjectDirs().some((d) => file.startsWith(d + path.sep)) && file.endsWith('.jsonl') && fs.existsSync(file) ? file : null
+}
+
+// The end of a transcript, which can run to many megabytes, from the first whole line.
+function transcriptTail(file, bytes = 2 * 1024 * 1024) {
+  const fd = fs.openSync(file, 'r')
+  try {
+    const { size } = fs.fstatSync(fd)
+    const start = Math.max(0, size - bytes)
+    const buf = Buffer.alloc(size - start)
+    fs.readSync(fd, buf, 0, buf.length, start)
+    const text = buf.toString('utf8')
+    return start ? text.slice(text.indexOf('\n') + 1) : text
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+function conversationOf(s) {
+  const file = transcriptFile(s)
+  if (!file) return []
+  const { size } = fs.statSync(file)
+  if (s.talk?.file === file && s.talk.size === size) return s.talk.items
+  const items = readConversation(transcriptTail(file))
+  s.talk = { file, size, items }
+  return items
+}
+
+function contextOf(s) {
+  const file = transcriptFile(s)
+  if (!file) return null
+  const { size } = fs.statSync(file)
+  // The same 2 MB tail as the conversation: on a 189 MB transcript 8 MB took 17 ms a read, 2 MB takes 5.
+  if (s.memo?.file !== file || s.memo.size !== size) s.memo = { file, size, report: contextReport(transcriptTail(file)) }
+  return s.memo.report
+}
+
+function conversationText(s, max = 15000) {
+  const file = transcriptFile(s)
+  if (file) {
     const { lines, lastReply } = readTranscript(fs.readFileSync(file, 'utf8').split('\n').slice(-400).join('\n'))
     if (lines.length) return { context: lines.join('\n').slice(-max), lastReply: lastReply.slice(0, 6000) }
   }
@@ -630,14 +826,29 @@ function serveStatic(url, res) {
   if (file !== dist && !file.startsWith(dist + path.sep)) return json(res, 403, { error: 'forbidden' })
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(dist, 'index.html')
   if (!fs.existsSync(file)) return json(res, 404, { error: 'run npm run build first' })
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' })
+  const type = MIME[path.extname(file)] || 'application/octet-stream'
+  res.writeHead(200, type === 'text/html' ? { 'content-type': type, 'content-security-policy': CSP } : { 'content-type': type })
   // The file can vanish between the check and the open while `npm run build` rewrites dist.
   fs.createReadStream(file).on('error', () => res.destroy()).pipe(res)
 }
 
 // ---------- HTTP API ----------
+const ACTS = new Set(['input', 'choose', 'stop', 'signal'])
+// The app's own page runs only its own scripts: markdown and agent output stay text even if
+// something got past DOMPurify. Web tiles may show any page.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src * data: blob:",
+  "font-src 'self' data:",
+  `connect-src 'self' ws://127.0.0.1:${PORT} ws://localhost:${PORT}`,
+  'frame-src http: https:',
+  "object-src 'none'",
+  "base-uri 'none'",
+].join('; ')
 const server = http.createServer(async (req, res) => {
-  if (!isAllowed(req)) return json(res, 403, { error: 'forbidden' })
+  if (!isAllowed(req, /^\/(api|mcp)\//.test(req.url ?? ''))) return json(res, 403, { error: 'forbidden' })
   // Everything below runs inside the try: a malformed URL from any page (`/%`, `//`) must cost
   // one 400/500, not the process and every console it owns.
   try {
@@ -654,17 +865,18 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] !== 'api') return serveStatic(url, res)
     const [, route, id, action] = parts
     if (route === 'state' && req.method === 'GET') {
-      return json(res, 200, fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : {})
+      return json(res, 200, readState())
     }
     if (route === 'state' && req.method === 'PUT') {
       const body = await readBody(req)
       JSON.parse(body) // reject garbage before it overwrites good state
+      backupState()
       fs.writeFileSync(STATE_FILE + '.tmp', body)
       fs.renameSync(STATE_FILE + '.tmp', STATE_FILE)
       return json(res, 200, { ok: true })
     }
     if (route === 'sessions') return json(res, 200, [...sessions.values()].map(summary))
-    if (route === 'agents') return json(res, 200, installed ?? (await detectAgents()))
+    if (route === 'agents') return json(res, 200, (!url.searchParams.has('refresh') && installed) || (await detectAgents()))
     if (route === 'hook' && req.method === 'POST') {
       const payload = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
       const s = sessions.get(id) // after the body: the console may have exited meanwhile
@@ -672,7 +884,12 @@ const server = http.createServer(async (req, res) => {
         const idlePrompt = payload.notification_type === 'idle_prompt' || /waiting for your input/i.test(payload.message || '')
         if (payload.transcript_path) s.transcript = String(payload.transcript_path)
         if (action === 'SessionStart') s.started = true // its TUI takes input now (helpers wait for this)
+        if (action === 'UserPromptSubmit') s.submits = (s.submits || 0) + 1
         trackSubagent(s, action, payload)
+        if (action === 'PreToolUse') setActivity(s, describeTool(payload.tool_name, payload.tool_input).doing)
+        else if (action !== 'PostToolUse') setActivity(s, null)
+        touchConversation(s, action === 'SessionStart')
+        if (action === 'Stop') setTimeout(() => sessions.get(s.id) === s && touchConversation(s), 1200)
         if (action === 'UserPromptSubmit' || action === 'PreToolUse' || action === 'PostToolUse') setStatus(s, 'working')
         else if (action === 'Stop') {
           setStatus(s, 'done')
@@ -730,6 +947,8 @@ const server = http.createServer(async (req, res) => {
         kill(s)
         return json(res, 200, { ok: true })
       }
+      // What acts on the console only ever comes as a POST.
+      if (ACTS.has(action) && req.method !== 'POST') return json(res, 405, { error: 'POST only' })
       const body = JSON.parse((await readBody(req, 1024 * 1024)) || '{}')
       if (action === 'input') {
         if (body.prompt) {
@@ -741,11 +960,56 @@ const server = http.createServer(async (req, res) => {
         }
         return json(res, 200, { ok: true })
       }
+      // A button pressed on a question. The screen is read again first, and again after moving to the
+      // option: a click that arrives late must never answer a different question, or pick another option.
+      if (action === 'choose') {
+        const index = Number(body.index)
+        const before = await readScreen(s)
+        if (!before || before.id !== body.askId) return json(res, 409, { error: 'the question has changed' })
+        if (!Number.isInteger(index) || !before.options[index]) return json(res, 400, { error: 'no such option' })
+        const moves = index - before.selected
+        for (let i = 0; i < Math.abs(moves); i++) {
+          writeTo(s, moves > 0 ? '\x1b[B' : '\x1b[A')
+          await sleep(60)
+        }
+        let now = await readScreen(s)
+        for (let tries = 0; moves && now?.id === body.askId && now.selected !== index && tries < 8; tries++) {
+          await sleep(100)
+          now = await readScreen(s)
+        }
+        if (!now || now.id !== body.askId || now.selected !== index) return json(res, 409, { error: 'the question has changed' })
+        writeTo(s, '\r')
+        s.answered = body.askId
+        publishAsk(s, null)
+        setStatus(s, isRefusal(before.options[index].label) ? 'idle' : 'working')
+        return json(res, 200, { ok: true })
+      }
+      // Esc interrupts an agent, but Claude fires no hook for it: look for its note in the transcript,
+      // or the console would keep saying "Running" until the 60s idle notice.
+      if (action === 'stop') {
+        writeTo(s, '\x1b')
+        if (s.agent.hooks) {
+          for (const ms of [1200, 3500]) {
+            setTimeout(() => {
+              if (sessions.get(s.id) !== s || s.status !== 'working' || conversationOf(s).at(-1)?.kind !== 'note') return
+              setStatus(s, 'idle')
+              setActivity(s, null)
+              settleSubagents(s)
+              touchConversation(s)
+            }, ms)
+          }
+        }
+        return json(res, 200, { ok: true })
+      }
       if (action === 'signal' && (body.signal === 'SIGSTOP' || body.signal === 'SIGCONT')) {
         signal(s, body.signal)
         return json(res, 200, { ok: true })
       }
       if (action === 'tail') return json(res, 200, { text: s.buf.slice(-(Number(body.chars) || 8000)) })
+      if (action === 'conversation') {
+        return json(res, 200, { items: conversationOf(s) })
+      }
+      if (action === 'context') return json(res, 200, { report: contextOf(s) })
     }
     if (route === 'ls') {
       const dir = url.searchParams.get('path') || os.homedir()
@@ -949,6 +1213,17 @@ function attachEvents(ws) {
   ws.on('close', () => eventClients.delete(ws))
 }
 
+// A connected folder that has gone away (an unplugged disk) must not stop the agent from starting.
+function connectedFolders(raw) {
+  if (!raw) return []
+  try {
+    const dirs = JSON.parse(raw)
+    return Array.isArray(dirs) ? dirs.filter(isDir) : []
+  } catch {
+    return []
+  }
+}
+
 function attachPty(ws, q) {
   const id = q.get('id')
   if (!id || !/^[\w-]{1,64}$/.test(id)) return ws.close()
@@ -968,10 +1243,11 @@ function attachPty(ws, q) {
         yolo: q.get('yolo') === '1',
         lead: q.get('lead') === '1',
         profile: q.get('profile') || undefined,
+        dirs: connectedFolders(q.get('dirs')),
       })
     } catch (e) {
       ws.send(`\r\n\x1b[31m${e.message}\x1b[0m\r\n`)
-      return ws.close()
+      return ws.close(4001, e.message.slice(0, 120))
     }
   } else if (s.buf) {
     ws.send(s.buf.replace(QUERIES, ''))
@@ -989,7 +1265,11 @@ function attachPty(ws, q) {
       return
     }
     if (!m || typeof m !== 'object') return
-    if (m.t === 'i' && typeof m.d === 'string') {
+    if (m.t === 'a' && Number.isFinite(m.n)) {
+      s.unacked.set(ws, Math.max(0, (s.unacked.get(ws) ?? 0) - m.n))
+      s.lastAckAt = Date.now()
+      holdOutput(s)
+    } else if (m.t === 'i' && typeof m.d === 'string') {
       s.pty.write(m.d)
       s.lastInputAt = Date.now()
       if (s.status === 'done') setStatus(s, 'idle')
@@ -999,9 +1279,17 @@ function attachPty(ws, q) {
       if (c && r) resize(s, c, r)
     }
   })
-  ws.on('close', () => s.clients.delete(ws))
+  ws.on('close', () => {
+    s.clients.delete(ws)
+    s.unacked.delete(ws)
+    if (sessions.get(s.id) === s) holdOutput(s)
+  })
 }
 
+server.on('error', (e) => {
+  console.error(e.code === 'EADDRINUSE' ? `port ${PORT} is in use by another program` : e)
+  process.exit(1)
+})
 server.listen(PORT, '127.0.0.1', () => console.log(`vibeboard server on http://127.0.0.1:${PORT}`))
 
 // Give agents up to 3s to close their own tool shells, then kill whatever is left,

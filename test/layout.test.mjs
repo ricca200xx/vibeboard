@@ -1,7 +1,28 @@
 // Group re-flow geometry (src/layout.ts runs as-is under Node's TypeScript type stripping).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { gridLayout, wouldCycle } from '../src/layout.ts'
+import { consoleUnder, gridLayout, tipSpot, wouldCycle } from '../src/layout.ts'
+
+test('a drop lands on the console under the pointer, never on what is being dragged', () => {
+  const at = (id, x, type = 'console') => ({ id, type, position: { x, y: 0 }, measured: { width: 100, height: 100 } })
+  const nodes = [at('a', 0), at('b', 50), at('note', 300, 'note')]
+  const abs = (n) => n.position
+  assert.equal(consoleUnder(nodes, new Set(['b']), { x: 60, y: 50 }, abs).id, 'a')
+  assert.equal(consoleUnder(nodes, new Set(['a']), { x: 60, y: 50 }, abs).id, 'b')
+  assert.equal(consoleUnder(nodes, new Set(['a']), { x: 320, y: 50 }, abs), undefined) // only consoles
+  assert.equal(consoleUnder(nodes, new Set(['a']), { x: 500, y: 50 }, abs), undefined)
+})
+
+test('a tooltip moves away from the window edge and stays inside', () => {
+  const win = { width: 1000, height: 800 }
+  const tip = { width: 100, height: 30 }
+  const box = (left, top) => ({ left, top, right: left + 40, bottom: top + 40, width: 40, height: 40 })
+  assert.deepEqual(tipSpot(box(20, 400), tip, win), { x: 68, y: 405 }) // left rail: to its right
+  assert.deepEqual(tipSpot(box(940, 400), tip, win), { x: 832, y: 405 }) // right rail: to its left
+  assert.deepEqual(tipSpot(box(500, 400), tip, win), { x: 470, y: 362 }) // anywhere else: above
+  assert.deepEqual(tipSpot(box(500, 10), tip, win), { x: 470, y: 58 }) // top bar: below
+  assert.deepEqual(tipSpot(box(860, 10), { width: 300, height: 30 }, win), { x: 692, y: 58 }) // clamped to the window
+})
 
 const W = 640
 const H = 420

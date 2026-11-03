@@ -7,6 +7,7 @@ import { project, useStore, workspace, type Memory } from '../store'
 import { agentById } from '../../shared/agents.js'
 import { AgentIcon } from './icons'
 import { useNow } from './LoopsModal'
+import { AgentsTab, FoldersTab } from './ContextPanel'
 
 const KINDS = ['Context', 'Architecture', 'Structure', 'Commands', 'Conventions', 'Gotchas']
 const KIND_COLORS: Record<string, string> = {
@@ -29,14 +30,19 @@ export function MemoryModal() {
   const p = useStore(project)!
   const projects = useStore((s) => s.projects)
   const scan = useStore((s) => s.scans.find((x) => x.cwd === p.path))
+  const [section, setSection] = useState<'agents' | 'memory' | 'folders'>(scan ? 'memory' : 'agents')
   const [tab, setTab] = useState<'repo' | 'all'>('repo')
   const [editing, setEditing] = useState<Memory | 'new' | null>(null)
   const [picking, setPicking] = useState(false)
+  const [kind, setKind] = useState<string | null>(null)
   const s = useStore.getState()
   const close = () => s.set({ modal: null })
-  const list = tab === 'repo' ? p.memories : projects.flatMap((x) => x.memories)
+  const all = tab === 'repo' ? p.memories : projects.flatMap((x) => x.memories)
+  const list = kind ? all.filter((m) => m.kind === kind) : all
+  const kinds = KINDS.filter((k) => all.some((m) => m.kind === k))
   const active = p.memories.filter((m) => m.enabled)
-  const listing = !scan && !picking
+  const listing = section === 'memory' && !scan && !picking
+  const inMemory = section === 'memory'
 
   const start = async (agent: string) => {
     try {
@@ -61,8 +67,8 @@ export function MemoryModal() {
             <Brain size={20} />
           </span>
           <div style={{ flex: 1 }}>
-            <h2>Memory</h2>
-            <div className="sub">What your agents should know — pushed from a memory card when you say so.</div>
+            <h2>Context</h2>
+            <div className="sub">What your agents have in mind, what they should know, and what they can reach.</div>
           </div>
           {listing && list.length > 0 && tab === 'repo' && (
             <>
@@ -79,22 +85,44 @@ export function MemoryModal() {
           </button>
         </div>
 
-        {picking && !scan && <ScanPicker onCancel={() => setPicking(false)} onStart={start} />}
-        {scan?.status === 'running' && <ScanProgress scan={scan} />}
-        {scan?.status === 'done' && <Review key={scan.id} scan={scan} />}
-        {scan?.status === 'failed' && <ScanFailed scan={scan} onRetry={() => api.clearScan(p.path).then(() => start(scan.agent))} />}
+        <div className="context-tabs">
+          <div className="seg">
+            <button className={section === 'agents' ? 'on' : ''} onClick={() => setSection('agents')}>
+              Agents
+            </button>
+            <button className={section === 'memory' ? 'on' : ''} onClick={() => setSection('memory')}>
+              Memory <span className="n">{p.memories.length}</span>
+            </button>
+            <button className={section === 'folders' ? 'on' : ''} onClick={() => setSection('folders')}>
+              Folders <span className="n">{p.folders?.length ?? 0}</span>
+            </button>
+          </div>
+        </div>
+
+        {section === 'agents' && <AgentsTab />}
+        {section === 'folders' && <FoldersTab />}
+
+        {inMemory && picking && !scan && <ScanPicker onCancel={() => setPicking(false)} onStart={start} />}
+        {inMemory && scan?.status === 'running' && <ScanProgress scan={scan} />}
+        {inMemory && scan?.status === 'done' && <Review key={scan.id} scan={scan} />}
+        {inMemory && scan?.status === 'failed' && <ScanFailed scan={scan} onRetry={() => api.clearScan(p.path).then(() => start(scan.agent))} />}
 
         {listing && (
           <>
-            <div style={{ padding: '14px 16px 6px' }}>
-              <div className="seg">
-                <button className={tab === 'repo' ? 'on' : ''} onClick={() => setTab('repo')}>
-                  {p.name} <span className="n">{p.memories.length}</span>
-                </button>
-                <button className={tab === 'all' ? 'on' : ''} onClick={() => setTab('all')}>
-                  All repos <span className="n">{projects.reduce((n, x) => n + x.memories.length, 0)}</span>
-                </button>
-              </div>
+            <div className="memory-filters">
+              <button className={`mem-filter ${tab === 'repo' ? 'on' : ''}`} onClick={() => setTab('repo')}>
+                {p.name} <span>{p.memories.length}</span>
+              </button>
+              <button className={`mem-filter ${tab === 'all' ? 'on' : ''}`} onClick={() => setTab('all')}>
+                All repos <span>{projects.reduce((n, x) => n + x.memories.length, 0)}</span>
+              </button>
+              {kinds.length > 1 && <i className="sep" />}
+              {kinds.length > 1 &&
+                kinds.map((k) => (
+                  <button key={k} className={`mem-filter ${kind === k ? 'on' : ''}`} onClick={() => setKind(kind === k ? null : k)}>
+                    <i style={{ background: KIND_COLORS[k] }} /> {k}
+                  </button>
+                ))}
             </div>
             <div className="modal-body nowheel">
               {!list.length && !editing ? (

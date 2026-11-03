@@ -2,10 +2,29 @@
 import type { Node } from '@xyflow/react'
 
 export const CONSOLE_SIZE = { width: 640, height: 420 }
+export const MIN_CONSOLE = { width: 380, height: 220 }
 export const GROUP_PAD = 24
 export const GROUP_HEAD = 44
 const GROUP_GAP = 60 // room for a console's sub-agent cards above the next row
 const EMPTY_GROUP = { width: 380, height: 220 }
+
+type Size = { width: number; height: number }
+type Box = Size & { left: number; top: number; right: number; bottom: number }
+
+// Where a tooltip goes: away from the window edge its control sits on, and always fully inside.
+export function tipSpot(anchor: Box, tip: Size, win: Size, gap = 8, margin = 8) {
+  const cx = anchor.left + anchor.width / 2 - tip.width / 2
+  const cy = anchor.top + anchor.height / 2 - tip.height / 2
+  let x = cx
+  let y = anchor.top - tip.height - gap
+  if (anchor.right < 120) [x, y] = [anchor.right + gap, cy]
+  else if (anchor.left > win.width - 120) [x, y] = [anchor.left - tip.width - gap, cy]
+  else if (y < margin) y = anchor.bottom + gap
+  return {
+    x: Math.round(Math.max(margin, Math.min(x, win.width - tip.width - margin))),
+    y: Math.round(Math.max(margin, Math.min(y, win.height - tip.height - margin))),
+  }
+}
 
 export const sizeOf = (n: Node) => ({
   width: n.measured?.width ?? n.width ?? (n.style?.width as number) ?? CONSOLE_SIZE.width,
@@ -22,6 +41,17 @@ export function freeSpot(nodes: Node[], rect: { x: number; y: number; width: num
     x = hit.x + hit.width + 40
   }
   return { x, y: rect.y }
+}
+
+// The console under the pointer while others are being dragged: what a drop would group them with.
+// Nodes inside a group hold relative positions, so `abs` says where each one really is.
+export function consoleUnder(nodes: Node[], dragged: Set<string>, at: { x: number; y: number }, abs: (n: Node) => { x: number; y: number }) {
+  return nodes.find((n) => {
+    if (n.type !== 'console' || dragged.has(n.id)) return false
+    const p = abs(n)
+    const { width, height } = sizeOf(n)
+    return at.x > p.x && at.x < p.x + width && at.y > p.y && at.y < p.y + height
+  })
 }
 
 // Would a wire source -> target close a loop of hand-offs (A -> B -> A would bounce work forever)?

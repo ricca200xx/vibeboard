@@ -6,16 +6,6 @@ import { AgentGlyph, AgentIcon } from './icons'
 import { command, mentionTargets } from '../planner'
 import { TEAMS } from '../teams'
 
-const CHIPS = {
-  new: ['#3ecfb2', '#f472b6'],
-  spawn: ['#7fd36b', '#f0553a'],
-  group: ['#d9c34a', '#8a7a3a'],
-  presets: ['#f5a33d', '#5b8cff'],
-  pause: ['#f0553a', '#5b8cff'],
-  resume: ['#f472b6', '#3ecf8e'],
-  memory: ['#a477ff', '#f5d547'],
-}
-
 const ROLES: [string, string][] = [
   ['Frontend', '#f5a33d'],
   ['Backend', '#a477ff'],
@@ -28,12 +18,41 @@ const ROLES: [string, string][] = [
 ]
 const FILL = ['claude', 'codex', 'gemini', 'grok', 'opencode', 'shell', 'aider', 'cursor', 'qwen', 'copilot']
 
-function Chip({ k, label, onClick, on }: { k: keyof typeof CHIPS; label: string; onClick: () => void; on?: boolean }) {
+const CHIPS = {
+  new: ['#3ecfb2', '#f472b6'],
+  spawn: ['#7fd36b', '#f0553a'],
+  group: ['#d9c34a', '#8a7a3a'],
+  presets: ['#f5a33d', '#5b8cff'],
+  pause: ['#f0553a', '#5b8cff'],
+  resume: ['#f472b6', '#3ecf8e'],
+  memory: ['#a477ff', '#f5d547'],
+}
+
+function Chip({ k, label, hint, onClick, on }: { k: keyof typeof CHIPS; label: string; hint: string; onClick: () => void; on?: boolean }) {
   const [a, b] = CHIPS[k]
   return (
-    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} onClick={onClick}>
+    <button className={`chip ${on ? 'on' : ''}`} style={{ ['--a' as string]: a, ['--b' as string]: b }} title={hint} onClick={onClick}>
       {label}
     </button>
+  )
+}
+
+// Several things selected: what can be done with them, in plain sight.
+function SelectionBar() {
+  const count = useStore((s) => workspace(s)?.nodes.filter((n) => n.selected).length ?? 0)
+  if (count < 2) return null
+  const s = useStore.getState()
+  return (
+    <div className="selection-bar" style={{ marginBottom: 8 }}>
+      {count} selected
+      <kbd>⌫ closes them</kbd>
+      <button className="btn" onClick={() => s.groupSelected()}>
+        Group
+      </button>
+      <button className="btn" onClick={() => s.deleteSelected()}>
+        Close
+      </button>
+    </div>
   )
 }
 
@@ -41,6 +60,7 @@ export function BottomBar() {
   const modal = useStore((s) => s.modal)
   const defaultAgent = useStore((s) => s.settings.defaultAgent)
   const [composer, setComposer] = useState(false)
+  const anyPaused = useStore((st) => consoles(workspace(st)?.nodes ?? []).some((n) => st.live[n.id]?.paused))
   const s = useStore.getState()
 
   return (
@@ -48,12 +68,14 @@ export function BottomBar() {
       <div style={{ position: 'relative' }}>
         {composer && <Composer onClose={() => setComposer(false)} />}
         {modal === 'presets' && <Presets />}
+        <SelectionBar />
         <div className="chips">
-          <Chip k="new" label="New console" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
-          <Chip k="spawn" label="Spawn 4" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
+          <Chip k="new" label="New agent" hint="Start one more agent" onClick={() => s.addConsole(defaultAgent, s.viewCenter())} />
+          <Chip k="spawn" label="4 agents" hint="Start four agents at once" onClick={() => s.spawnMany(Array(4).fill(defaultAgent))} />
           <Chip
             k="group"
             label="Group"
+            hint="Put the selected agents in a group, or start a new one. You can also drag one terminal onto another"
             on={composer}
             onClick={() => {
               const selected = consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected && !n.parentId)
@@ -61,10 +83,13 @@ export function BottomBar() {
               else setComposer((v) => !v)
             }}
           />
-          <Chip k="presets" label="Presets" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
-          <Chip k="pause" label="Pause all" onClick={s.pauseAll} />
-          <Chip k="resume" label="Resume all" onClick={s.resumeAll} />
-          <Chip k="memory" label="Memory" onClick={() => s.set({ modal: 'memory' })} />
+          <Chip k="presets" label="Presets" hint="Ready-made teams, such as plan, build and review" on={modal === 'presets'} onClick={() => s.set({ modal: modal === 'presets' ? null : 'presets' })} />
+          {anyPaused ? (
+            <Chip k="resume" label="Resume all" hint="Let every frozen agent continue" onClick={s.resumeAll} />
+          ) : (
+            <Chip k="pause" label="Pause all" hint="Freeze every agent on this board" onClick={s.pauseAll} />
+          )}
+          <Chip k="memory" label="Context" hint="How full your agents are, what they should know, and connected folders such as a second brain" onClick={() => s.set({ modal: 'memory' })} />
         </div>
       </div>
       <CommandBar />
@@ -148,7 +173,7 @@ export function Composer({ onClose, onBack, at }: { onClose: () => void; onBack?
             onClose()
           }}
         >
-          Spawn {slots.length}
+          Start {slots.length} agent{slots.length === 1 ? '' : 's'}
         </button>
       </div>
     </div>
@@ -162,6 +187,9 @@ function Presets() {
   const selectedAgents = () => consoles(workspace(useStore.getState())?.nodes ?? []).filter((n) => n.selected).map((n) => n.data.agent)
   return (
     <div className="menu nowheel" style={{ bottom: 'calc(100% + 16px)', left: '50%', transform: 'translateX(-50%)', width: 400, maxHeight: '70vh', overflow: 'auto' }}>
+      <button className="icon-btn sm menu-close" title="Close" onClick={() => useStore.getState().set({ modal: null })}>
+        <X size={14} />
+      </button>
       <div className="menu-title">Teams</div>
       {TEAMS.map((t) => (
         <button
@@ -237,7 +265,7 @@ function Presets() {
   )
 }
 
-type Recognition = { start: () => void; stop: () => void; onresult: (e: any) => void; onend: () => void; interimResults: boolean; continuous: boolean; lang: string }
+type Recognition = { start: () => void; stop: () => void; onresult: (e: any) => void; onend: () => void; onerror: (e: { error: string }) => void; interimResults: boolean; continuous: boolean; lang: string }
 
 // Browser dictation into a text field: what is said is appended to what was typed.
 // start() says whether dictation began (it is missing in some browsers).
@@ -257,6 +285,13 @@ export function useDictation(text: string, setText: (t: string) => void) {
     const base = text ? `${text} ` : ''
     rec.onresult = (e) => setText(base + [...e.results].map((r: any) => r[0].transcript).join(''))
     rec.onend = () => setListening(false)
+    // The desktop app has no access to the browser's speech service: the Mac's own dictation works in any field.
+    rec.onerror = (e: { error: string }) => {
+      setListening(false)
+      if (e.error === 'no-speech' || e.error === 'aborted') return
+      const why = e.error === 'not-allowed' ? 'The microphone is not allowed for vibeboard.' : 'Dictation is not available here.'
+      useStore.getState().notify(`${why} Use the Mac's own dictation instead: press the fn key twice in any text field.`)
+    }
     rec.start()
     recRef.current = rec
     setListening(true)
@@ -390,7 +425,7 @@ function CommandBar() {
         <input
           ref={inputRef}
           value={text}
-          placeholder={busy ? 'Planning…' : 'Hold space to speak · @ to direct...'}
+          placeholder={busy ? 'Planning…' : 'Ask your agents · @ to pick one · hold space to talk'}
           onChange={(e) => {
             setText(e.target.value)
             const m = e.target.value.slice(0, e.target.selectionStart ?? undefined).match(/@([^@\n]*)$/)
@@ -410,10 +445,10 @@ function CommandBar() {
       <button className="round-btn" title="Recent commands" onClick={() => setShowHistory((v) => !v)}>
         <ChevronUp size={17} />
       </button>
-      <button className="round-btn" title="Send" onClick={submit}>
+      <button className="round-btn" title="Send to your agents" onClick={submit}>
         <ArrowUp size={16} />
       </button>
-      <button className={`round-btn ${listening ? 'hot' : ''}`} title="Dictate" onClick={() => (listening ? stopVoice() : startVoice())}>
+      <button className={`round-btn ${listening ? 'hot' : ''}`} title="Dictate instead of typing (or hold space)" onClick={() => (listening ? stopVoice() : startVoice())}>
         {listening ? <Square size={13} fill="currentColor" /> : <Mic size={16} />}
       </button>
       {reply && (

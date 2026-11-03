@@ -113,7 +113,7 @@ function OrchestratorNodeImpl({ id, selected, positionAbsoluteX, positionAbsolut
           </span>
           <span className="spacer" />
           <span style={{ position: 'relative' }}>
-            <button className="icon-btn sm" title="Spawn an agent for this orchestrator" onClick={() => setSpawnMenu((v) => !v)}>
+            <button className="icon-btn sm" title="New agent for this orchestrator" onClick={() => setSpawnMenu((v) => !v)}>
               <Plus size={14} />
             </button>
             {spawnMenu && (
@@ -142,7 +142,7 @@ function OrchestratorNodeImpl({ id, selected, positionAbsoluteX, positionAbsolut
         <div className="orch-body nodrag nowheel">
           {connecting ? (
             <>
-              <p className="orch-hint">Click consoles or groups on the board, or wire them here. Tap Done when finished.</p>
+              <p className="orch-hint">Click consoles or groups on the board, or connect them here. Tap Done when finished.</p>
               {groupsOnBoard.length > 0 && <div className="orch-label">Groups</div>}
               {groupsOnBoard.map((g) => (
                 <button key={g.id} className={`orch-pick ${targets.includes(g.id) ? 'on' : ''}`} onClick={() => s.toggleWire(id, g.id)}>
@@ -165,7 +165,7 @@ function OrchestratorNodeImpl({ id, selected, positionAbsoluteX, positionAbsolut
             <div className="orch-empty">
               <span className="orb lg" />
               <b>No agents wired</b>
-              <span>Spawn a fresh lane below, or tap Connect and pick consoles or groups on the board.</span>
+              <span>Start a new agent below, or tap Connect and pick consoles or groups on the board.</span>
               <button className="pill-btn btn ghost" onClick={() => setSpawnMenu(true)}>
                 <Plus size={14} /> Spawn agent
               </button>

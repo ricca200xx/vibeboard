@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -37,20 +37,32 @@ const middle = (s: string, max = 26) =>
   s.length <= max ? s : `${s.slice(0, 10)}…${s.slice(-(max - 11))}`;
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
+const CHANGE_WORD: Record<string, string> = { M: "Edited", A: "New", U: "New", D: "Deleted", R: "Renamed", C: "Copied" };
+
 export function GitPill() {
   const p = useStore(project)!;
   const [git, setGit] = useState<GitInfo | null | undefined>(undefined); // null: not a repository
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
-  const load = () =>
+  const loading = useRef(false);
+  const load = () => {
+    // A big repository can take longer than the interval: never two at once.
+    if (loading.current) return;
+    loading.current = true;
     api
       .git(p.path)
       .then(setGit)
-      .catch(() => setGit(undefined));
+      .catch(() => setGit(undefined))
+      .finally(() => (loading.current = false));
+  };
   useEffect(() => {
     load();
-    const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
+    const t = setInterval(() => !document.hidden && load(), 15_000);
+    addEventListener("focus", load);
+    return () => {
+      clearInterval(t);
+      removeEventListener("focus", load);
+    };
   }, [p.path]);
   if (git === undefined) return null;
   // A folder without git still gets the pill: one click makes it a repository.
@@ -139,8 +151,6 @@ function GitPanel({
   const [branches, setBranches] = useState(false);
 
   const picked = git.files.filter((f) => !skip.has(f.path));
-  const add = picked.reduce((n, f) => n + f.add, 0);
-  const del = picked.reduce((n, f) => n + f.del, 0);
   // Nothing unticked: commit everything, including files past the listed 200.
   const files = skip.size ? picked.map((f) => f.path) : undefined;
   const count = files?.length ?? git.changes;
@@ -148,15 +158,15 @@ function GitPanel({
   const sync = !git.remote
     ? "local only"
     : !git.upstream
-      ? "not published"
+      ? "only on this Mac"
       : git.ahead || git.behind
         ? [
-            git.ahead && `${git.ahead} ahead`,
-            git.behind && `${git.behind} behind`,
+            git.ahead && `${git.ahead} to upload`,
+            git.behind && `${git.behind} to download`,
           ]
             .filter(Boolean)
             .join(" · ")
-        : "synced";
+        : "up to date";
 
   const act = async (action: "push" | "pull", ok: string) => {
     setBusy(action);
@@ -191,14 +201,14 @@ function GitPanel({
       await api.gitAction("commit", cwd, message.trim() || placeholder, files);
       setMessage("");
       setSkip(new Set());
-      let text = `Committed ${plural(count, "file")}`;
+      let text = `Saved ${plural(count, "file")}`;
       if (git.remote) {
         setBusy("push");
         try {
           await api.gitAction("push", cwd);
-          text += " · pushed";
+          text += " and uploaded";
         } catch (e) {
-          text += ` · push failed: ${(e as Error).message}`;
+          text += `, but the upload failed: ${(e as Error).message}`;
           return setDone({ ok: false, text });
         }
       }
@@ -265,7 +275,7 @@ function GitPanel({
           </span>
           <button
             className={`round-btn sm ${history ? "on" : ""}`}
-            title="History"
+            title="All saved versions"
             onClick={() => setHistory((v) => !v)}
           >
             <History size={15} />
@@ -281,9 +291,6 @@ function GitPanel({
               <ArrowUpRight size={15} />
             </a>
           )}
-          <button className="round-btn sm" title="Refresh" onClick={reload}>
-            <RotateCw size={14} />
-          </button>
           <button className="round-btn sm" title="Close" onClick={onClose}>
             <X size={15} />
           </button>
@@ -292,7 +299,7 @@ function GitPanel({
         {history ? (
           <div className="git-scroll">
             <div className="git-sec">
-              History <span className="n">{git.commits.length}</span>
+              Saved versions <span className="n">{git.commits.length}</span>
             </div>
             {git.commits.map((c) => (
               <button
@@ -312,18 +319,9 @@ function GitPanel({
         ) : (
           <>
             <div className="git-sec">
-              Changes
+              {git.changes ? `${plural(git.changes, "changed file")}` : "Changes"}
               {git.changes > 0 && (
                 <>
-                  <span className="n">
-                    {picked.length}/{git.files.length}
-                  </span>
-                  {(add > 0 || del > 0) && (
-                    <span className="n">
-                      <span className="plus">+{add}</span>{" "}
-                      <span className="minus">-{del}</span>
-                    </span>
-                  )}
                   <span className="spacer" />
                   <button
                     className="link"
@@ -335,7 +333,7 @@ function GitPanel({
                       )
                     }
                   >
-                    {skip.size ? "All" : "None"}
+                    {skip.size ? "Select all" : "Select none"}
                   </button>
                 </>
               )}
@@ -369,20 +367,21 @@ function GitPanel({
                         title="See what changed"
                         onClick={() => setView({ kind: "file", path: f.path })}
                       >
-                        <span className={`git-code c-${code}`}>{code}</span>
-                        <span style={{ minWidth: 0, flex: 1 }}>
-                          <div className="git-name">
+                        <span className="git-where">
+                          <span className="git-name">
                             {f.path.slice(slash + 1)}
-                          </div>
+                          </span>
                           {slash > 0 && (
-                            <div className="git-dir">
+                            <span className="git-dir">
                               {f.path.slice(0, slash)}
-                            </div>
+                            </span>
                           )}
                         </span>
-                        <span className="git-lines">
-                          {f.add > 0 && <span className="plus">+{f.add}</span>}{" "}
-                          {f.del > 0 && <span className="minus">-{f.del}</span>}
+                        <span
+                          className={`git-word c-${code}`}
+                          title={`${f.add} lines added, ${f.del} removed`}
+                        >
+                          {CHANGE_WORD[code] ?? "Changed"}
                         </span>
                       </button>
                     </div>
@@ -399,8 +398,8 @@ function GitPanel({
               <div className="git-clean">
                 <CircleCheck size={16} color="var(--done)" />
                 <span>
-                  <div>Working tree clean</div>
-                  <div className="git-dir">Nothing to commit.</div>
+                  <div>Everything is saved</div>
+                  <div className="git-dir">Nothing new since the last version.</div>
                 </span>
               </div>
             )}
@@ -408,13 +407,13 @@ function GitPanel({
               <div className="git-compose">
                 <div className="git-msg">
                   <input
-                    placeholder={placeholder}
+                    placeholder={`What changed? (${placeholder})`}
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && commit()}
                   />
                   <button
-                    title="Write the message from the changes"
+                    title="Let your agent write it"
                     disabled={!!busy || !count}
                     onClick={write}
                   >
@@ -426,6 +425,7 @@ function GitPanel({
                 </div>
                 <button
                   className="git-commit"
+                  title={git.remote ? "git commit and push" : "git commit"}
                   disabled={!!busy || !count}
                   onClick={commit}
                 >
@@ -439,10 +439,10 @@ function GitPanel({
                     />
                   )}
                   {busy === "commit"
-                    ? "Committing…"
+                    ? "Saving…"
                     : busy === "push"
-                      ? "Pushing…"
-                      : `${git.remote ? "Commit & Push" : "Commit"} ${plural(count, "file")}`}
+                      ? "Uploading…"
+                      : `${git.remote ? "Save and upload" : "Save"} ${plural(count, "file")}`}
                 </button>
               </div>
             )}
@@ -456,32 +456,32 @@ function GitPanel({
                     <button
                       className="btn"
                       disabled={!!busy}
-                      onClick={() => act("pull", "Up to date")}
+                      onClick={() => act("pull", "Downloaded the latest")}
                       title="Get the latest from the remote (only when it does not need a merge)"
                     >
                       <ArrowDown size={14} />{" "}
-                      {busy === "pull" ? "Pulling…" : `Pull ${git.behind}`}
+                      {busy === "pull" ? "Downloading…" : `Download ${git.behind} new`}
                     </button>
                   )}
                   {git.changes === 0 && (git.ahead > 0 || !git.upstream) && (
                     <button
                       className="btn"
                       disabled={!!busy}
-                      onClick={() => act("push", "Pushed")}
+                      onClick={() => act("push", "Uploaded")}
                     >
                       <ArrowUp size={14} />{" "}
                       {busy === "push"
-                        ? "Pushing…"
+                        ? "Uploading…"
                         : git.upstream
-                          ? `Push ${git.ahead}`
-                          : "Publish branch"}
+                          ? `Upload ${git.ahead}`
+                          : "Upload this branch"}
                     </button>
                   )}
                 </div>
               )}
             {git.commits.length > 0 && (
               <>
-                <div className="git-sec">Recent</div>
+                <div className="git-sec">Last saved</div>
                 {git.commits.slice(0, 3).map((c) => (
                   <button
                     className="git-recent"

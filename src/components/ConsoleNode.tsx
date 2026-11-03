@@ -2,21 +2,26 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { Check, ChevronDown, Copy, Forward, RotateCcwClock, RotateCw, X } from 'lucide-react'
+import { Check, ChevronDown, Forward, RotateCcwClock, RotateCw, X } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { api, ptyUrl, type Subagent } from '../api'
-import { absolute, agentColor, consoles, launchCache, useStore, workspace, type ConsoleData } from '../store'
+import { absolute, agentColor, consoles, launchCache, project, useStore, workspace, type ConsoleData } from '../store'
+import { CONSOLE_SIZE, MIN_CONSOLE } from '../layout'
+import { ContextChip, ContextDetails, useContextReport } from './ContextPanel'
+import { parseSize, Popover, SizeMenu, sizeText } from './SizeMenu'
 import { AGENTS, agentById } from '../../shared/agents.js'
 import { AgentGlyph, AgentIcon } from './icons'
 import { initials } from './UsagePanel'
+import { currentTheme, useTheme, type Theme } from '../theme'
+import { Conversation, SimpleFooter, StatusStrip } from './SimpleView'
 
-const THEME = {
-  background: '#151413',
-  foreground: '#e6e1da',
+const DARK = {
+  background: '#0f0e0c',
+  foreground: '#ece4d8',
   cursor: '#f0553a',
-  cursorAccent: '#151413',
+  cursorAccent: '#0f0e0c',
   selectionBackground: 'rgba(240, 85, 58, 0.32)',
-  black: '#1d1b19',
+  black: '#1d1d1f',
   red: '#ff6b5b',
   green: '#62d48a',
   yellow: '#f5c560',
@@ -33,6 +38,31 @@ const THEME = {
   brightCyan: '#8ce6e6',
   brightWhite: '#ffffff',
 }
+const LIGHT = {
+  background: '#fffdf9',
+  foreground: '#211d18',
+  cursor: '#dd4a28',
+  cursorAccent: '#fffdf9',
+  selectionBackground: 'rgba(221, 74, 40, 0.2)',
+  black: '#1d1d1f',
+  red: '#c4261a',
+  green: '#1a7f37',
+  yellow: '#8a5a00',
+  blue: '#0a5fd6',
+  magenta: '#8f3fc4',
+  cyan: '#0f7c8a',
+  white: '#6e6e73',
+  brightBlack: '#6e6e73',
+  brightRed: '#d12f1b',
+  brightGreen: '#228b45',
+  brightYellow: '#a86a00',
+  brightBlue: '#2f76e0',
+  brightMagenta: '#a24fd6',
+  brightCyan: '#14899a',
+  brightWhite: '#3a3a3c',
+}
+// Agent CLIs choose their own colours, often for a dark screen: on white xterm darkens any that are too faint.
+const terminalLook = (theme: Theme) => (theme === 'light' ? { theme: LIGHT, minimumContrastRatio: 4.5 } : { theme: DARK, minimumContrastRatio: 1 })
 
 export type ConsoleStatus = 'idle' | 'working' | 'needs' | 'done' | 'paused' | 'stopped'
 
@@ -54,12 +84,14 @@ function launchParams(id: string, epoch: number): Record<string, string> {
   if (cached) return cached
   const s = useStore.getState()
   const d = workspace(s)!.nodes.find((n) => n.id === id)!.data as ConsoleData
+  const folders = project(s)?.folders
   let params: Record<string, string> = {
     agent: d.agent,
     cwd: d.cwd,
     yolo: d.yolo ? '1' : '0',
     ...(d.lead ? { lead: '1' } : {}),
     ...(d.profile ? { profile: d.profile } : {}),
+    ...(folders?.length ? { dirs: JSON.stringify(folders) } : {}),
   }
   if (!s.live[id] && agentById(d.agent)?.resume) {
     if (d.resumeNext && d.lastSessionId) {
@@ -76,10 +108,36 @@ function launchParams(id: string, epoch: number): Record<string, string> {
   return params
 }
 
-function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit: () => void }) {
+const COMMAND_NOT_FOUND = 127
+
+// Why it stopped, in words that say what to do about it.
+function exitMessage(name: string, code: number | undefined, reason: string | null) {
+  if (reason?.startsWith('folder not found')) return `This project's folder is gone: ${reason.replace('folder not found: ', '')}`
+  if (reason) return `${name} could not start: ${reason}`
+  if (code === COMMAND_NOT_FOUND) return `${name} is not installed on this Mac. Install it, or pick another agent from the menu at the top left of this console.`
+  if (code === 0 || code === undefined) return `${name} has closed.`
+  return `${name} stopped unexpectedly (code ${code}).`
+}
+
+const ACK_EVERY = 64 * 1024
+const RETRY_FIRST_MS = 400
+const RETRY_MAX_MS = 5000
+const REFIT_AFTER_MS = 60
+// Sizes in board pixels; the terminal takes as many columns and rows as fit.
+const CONSOLE_SIZES: [string, string][] = [
+  ['480 × 320', 'Small'],
+  ['640 × 420', 'Medium'],
+  ['960 × 640', 'Large'],
+  ['1280 × 800', 'Extra large'],
+  ['1200 × 420', 'Wide'],
+  ['640 × 900', 'Tall'],
+]
+
+function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit: (reason?: string) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const termRef = useRef<{ term: Terminal; fit: FitAddon } | null>(null)
   const fontSize = useStore((s) => s.settings.fontSize)
+  const theme = useTheme()
 
   useEffect(() => {
     const el = ref.current!
@@ -94,7 +152,7 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       lineHeight: 1.22,
       cursorBlink: true,
       scrollback: 10000,
-      theme: THEME,
+      ...terminalLook(currentTheme()),
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -107,10 +165,44 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       if (disposed) return
       term.open(el)
       refit()
-      ws = new WebSocket(ptyUrl({ id, cols: String(term.cols), rows: String(term.rows), ...launchParams(id, epoch) }))
-      ws.onmessage = (e) => term.write(e.data)
-      // Any close we did not cause means the process is gone (exit, server restart or crash).
-      ws.onclose = () => !disposed && onExit()
+      // Tells the server how much has been drawn. A hidden tab draws slowly by design: it does not hold agents back.
+      let drawn = 0
+      const ack = (n: number) => {
+        drawn += n
+        if (drawn < ACK_EVERY && !document.hidden) return
+        if (ws?.readyState === 1) ws.send(JSON.stringify({ t: 'a', n: drawn }))
+        drawn = 0
+      }
+      let delay = RETRY_FIRST_MS
+      const connect = () => {
+        ws = new WebSocket(ptyUrl({ id, cols: String(term.cols), rows: String(term.rows), ...launchParams(id, epoch) }))
+        ws.onopen = () => (delay = RETRY_FIRST_MS)
+        ws.onmessage = (e) => term.write(e.data, () => ack(e.data.length))
+        ws.onclose = (e) => {
+          if (disposed) return
+          if (e.code === 4000) return onExit()
+          if (e.code === 4001) return onExit(e.reason)
+          retry()
+        }
+      }
+      // The socket fell but the agent may be fine (the Mac slept, the server restarted): look before
+      // declaring it dead, and pick the screen up again if it is still running.
+      const retry = () => {
+        setTimeout(async () => {
+          if (disposed) return
+          try {
+            const alive = (await api.sessions()).some((x) => x.id === id)
+            if (disposed) return
+            if (!alive) return onExit()
+            term.reset()
+            connect()
+          } catch {
+            delay = Math.min(delay * 2, RETRY_MAX_MS)
+            retry()
+          }
+        }, delay)
+      }
+      connect()
       term.onData((data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'i', d: data })))
       // "Typing starts fresh": only a real keystroke dismisses the resume offer. onData would not do:
       // it also fires for the terminal's automatic replies to the TUI's capability queries.
@@ -120,10 +212,16 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
       })
       term.onResize(({ cols, rows }) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'r', cols, rows })))
     })
-    const ro = new ResizeObserver(refit)
+    // Settles first: refitting on every frame of a resize would make the CLI repaint as many times.
+    let settling: ReturnType<typeof setTimeout>
+    const ro = new ResizeObserver(() => {
+      clearTimeout(settling)
+      settling = setTimeout(refit, REFIT_AFTER_MS)
+    })
     ro.observe(el)
     return () => {
       disposed = true
+      clearTimeout(settling)
       termRef.current = null
       ro.disconnect()
       ws?.close()
@@ -138,6 +236,12 @@ function TerminalView({ id, epoch, onExit }: { id: string; epoch: number; onExit
     t.term.options.fontSize = fontSize
     if (t.term.element) t.fit.fit()
   }, [fontSize])
+
+  // The theme changes in place too.
+  useEffect(() => {
+    const t = termRef.current
+    if (t) Object.assign(t.term.options, terminalLook(theme))
+  }, [theme])
 
   // ponytail: xterm ignores the board's CSS scale, so mouse selection is offset when zoom != 100%.
   // Keyboard is unaffected; double-click the header to snap the console to 100%.
@@ -254,23 +358,32 @@ export function WirePick({ id }: { id: string }) {
   if (!orch) return null
   return (
     <button className={`wire-pick nodrag ${wired ? 'on' : ''}`} onClick={() => useStore.getState().toggleWire(orch, id)}>
-      <span>{wired ? 'Wired · click to remove' : 'Click to wire'}</span>
+      <span>{wired ? 'Connected · click to remove' : 'Click to connect'}</span>
     </button>
   )
 }
 
-function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
+function ConsoleNodeImpl({ id, data, selected, width, height }: NodeProps<Node<ConsoleData>>) {
   const live = useStore((s) => s.live[id])
-  const { updateData, restartConsole, duplicateConsole, removeNode } = useStore.getState()
+  const { updateData, restartConsole, removeNode, resizeNode } = useStore.getState()
+  const [pop, setPop] = useState<{ what: 'size' | 'context'; anchor: DOMRect } | null>(null)
+  const toggle = (what: 'size' | 'context') => (e: React.MouseEvent<HTMLElement>) => setPop(pop?.what === what ? null : { what, anchor: e.currentTarget.getBoundingClientRect() })
+  const report = useContextReport(data.agent === 'claude' ? id : '')
+  const size = sizeText(width ?? CONSOLE_SIZE.width, height ?? CONSOLE_SIZE.height)
   const [editing, setEditing] = useState(false)
   const [confirmClose, setConfirmClose] = useState(false)
   const [agentMenu, setAgentMenu] = useState(false)
   const [handMenu, setHandMenu] = useState(false)
   const [exited, setExited] = useState(false)
+  const [exitReason, setExitReason] = useState<string | null>(null)
+  const exitCode = useStore((s) => s.exits[id])
   const profiles = useStore((s) => s.settings.profiles) ?? []
   const account = data.profile ? profiles.find((p) => p.id === data.profile) : undefined
   const status: ConsoleStatus = !live ? 'stopped' : live.paused ? 'paused' : live.status
   const color = agentColor(data.agent)
+  const simple = data.view === 'simple' && data.agent !== 'shell'
+  // Only Claude's transcript can be read as a conversation; other agents keep their terminal in view.
+  const chat = simple && data.agent === 'claude'
 
   useEffect(() => setExited(false), [data.epoch])
 
@@ -284,10 +397,32 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
 
   return (
     <>
-      <NodeResizer isVisible={selected} minWidth={380} minHeight={220} />
+      <NodeResizer isVisible={selected} minWidth={MIN_CONSOLE.width} minHeight={MIN_CONSOLE.height} />
+      {pop && (
+        <Popover anchor={pop.anchor} onClose={() => setPop(null)}>
+          {pop.what === 'size' ? (
+            <SizeMenu
+              current={size}
+              sizes={CONSOLE_SIZES}
+              min={MIN_CONSOLE.height}
+              onPick={(v) => {
+                setPop(null)
+                const [w, h] = parseSize(v)
+                resizeNode(id, Math.max(w, MIN_CONSOLE.width), h)
+              }}
+            />
+          ) : (
+            report && (
+              <div className="menu ctx-pop">
+                <ContextDetails id={id} report={report} onDone={() => setPop(null)} />
+              </div>
+            )
+          )}
+        </Popover>
+      )}
       <Handle type="target" position={Position.Left} className="wire-handle" />
       <Handle type="source" position={Position.Right} className="wire-handle" title="Drag onto another console: it takes over whenever this one finishes" />
-      <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 42%, #2a2724)` }}>
+      <div className={`console ${status}`} style={{ ['--c' as string]: `color-mix(in srgb, ${color} 48%, var(--panel-3))` }}>
         <WirePick id={id} />
         <div className="console-head" onDoubleClick={snapTo100}>
           <button className="agent-switch nodrag" onClick={() => setAgentMenu((v) => !v)} title={agentById(data.agent)?.name}>
@@ -329,22 +464,33 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
           )}
           {data.role && <span className="role">{data.role}</span>}
           {data.yolo && (
-            <span className="badge" style={{ color: 'var(--accent)' }}>
-              yolo
+            <span className="badge" style={{ color: 'var(--accent)' }} title="This agent acts without asking first. Use it only on projects you trust.">
+              Auto-approve
             </span>
           )}
           <span className="spacer" />
+          <button className="vp-chip size-chip nodrag" data-popover-toggle title="Size of this terminal: pick one or type your own" onClick={toggle('size')}>
+            {size}
+          </button>
+          {report && <ContextChip report={report} onClick={toggle('context')} />}
+          {data.agent !== 'shell' && (
+            <div className="seg view-switch nodrag" title="Simple shows a conversation. Terminal shows the real thing underneath.">
+              <button className={simple ? 'on' : ''} onClick={() => updateData(id, { view: 'simple' })}>
+                Simple
+              </button>
+              <button className={simple ? '' : 'on'} onClick={() => updateData(id, { view: 'terminal' })}>
+                Terminal
+              </button>
+            </div>
+          )}
           <StatusPill status={status} />
-          <button className="icon-btn sm nodrag" title="Hand off this agent's work" onClick={() => setHandMenu((v) => !v)}>
+          <button className="icon-btn sm nodrag" title="Pass this agent's work to another one" onClick={() => setHandMenu((v) => !v)}>
             <Forward size={15} />
           </button>
-          <button className="icon-btn sm nodrag" title="Restart" onClick={() => restartConsole(id)}>
+          <button className="icon-btn sm nodrag" title="Stop it and start it again" onClick={() => restartConsole(id)}>
             <RotateCw size={14} />
           </button>
-          <button className="icon-btn sm nodrag" title="Duplicate" onClick={() => duplicateConsole(id)}>
-            <Copy size={14} />
-          </button>
-          <button className="icon-btn sm nodrag" title="Close" onClick={() => setConfirmClose(true)}>
+          <button className="icon-btn sm nodrag" title="Stop it and remove it" onClick={() => setConfirmClose(true)}>
             <X size={15} />
           </button>
         </div>
@@ -391,19 +537,38 @@ function ConsoleNodeImpl({ id, data, selected }: NodeProps<Node<ConsoleData>>) {
 
         {data.resumeOffer && data.lastSessionId && <ResumeOffer id={id} sessionId={data.lastSessionId} />}
 
+        {simple && !chat && <StatusStrip id={id} status={status} />}
+
         <div className="console-body nodrag nowheel nopan">
-          <TerminalView id={id} epoch={data.epoch} onExit={() => setExited(true)} />
+          <TerminalView
+            id={id}
+            epoch={data.epoch}
+            onExit={(reason) => {
+              setExited(true)
+              setExitReason(reason ?? null)
+            }}
+          />
+          {/* Laid over the terminal, never beside it: resizing a terminal makes the CLI redraw, and a
+              question that opens and closes with each redraw would resize it again, forever. */}
+          {chat && (
+            <div className="simple-layer">
+              <StatusStrip id={id} status={status} />
+              <Conversation id={id} name={data.name} />
+              {live && <SimpleFooter id={id} data={data} status={status} />}
+            </div>
+          )}
           {exited && (
             <div className="console-overlay">
               <div className="box">
-                <div>{agentById(data.agent)?.name ?? 'Process'} exited</div>
+                <div>{exitMessage(agentById(data.agent)?.name ?? 'This console', exitCode, exitReason)}</div>
                 <button className="btn primary" onClick={() => restartConsole(id, false)}>
-                  <RotateCw size={14} /> Relaunch
+                  <RotateCw size={14} /> Start again
                 </button>
               </div>
             </div>
           )}
         </div>
+        {simple && !chat && live && <SimpleFooter id={id} data={data} status={status} />}
       </div>
       <SubagentTray id={id} />
     </>

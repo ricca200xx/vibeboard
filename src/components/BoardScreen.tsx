@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   useReactFlow,
   useViewport,
   type Node,
+  type OnNodeDrag,
 } from '@xyflow/react'
 import {
-  Copy,
   Eraser,
   FileText,
   FileType,
@@ -18,6 +19,7 @@ import {
   Image,
   Layers,
   ListChecks,
+  Shapes,
   Maximize2,
   Minus,
   Monitor,
@@ -43,9 +45,6 @@ import { AGENTS } from '../../shared/agents.js'
 import { ConsoleNode } from './ConsoleNode'
 import { CommandEdge, HandoffEdge, HelperEdge, MemoryEdge } from './HandoffEdge'
 import { OrchestratorNode } from './Orchestrator'
-import { CodeNode, CodeStudio } from './CodeStudio'
-import { DocumentNode, DocumentsStudio } from './DocumentsStudio'
-import { MarkdownNode, MarkdownStudio } from './MarkdownStudio'
 import { ContextMenu, type MenuAt } from './ContextMenu'
 import { GroupNode, ImageNode, InkNode, NoteNode, TextNode } from './Nodes'
 import { newWebData, WebTile } from './WebTile'
@@ -61,7 +60,25 @@ import { MissionMap } from './MissionMap'
 import { LoopsModal } from './LoopsModal'
 import { MemoryCard, MemoryModal } from './MemoryModal'
 import { SettingsModal } from './Panels'
+import { themed } from '../theme'
+import { consoleUnder } from '../layout'
 import { UsagePanel } from './UsagePanel'
+
+// A card from a studio shows a plain panel for the moment its code takes to arrive.
+function lazyCard(load: () => Promise<{ default: React.ComponentType<any> }>) {
+  const Card = lazy(load)
+  return (props: any) => (
+    <Suspense fallback={<div className="card-chunk-loading" />}>
+      <Card {...props} />
+    </Suspense>
+  )
+}
+const CodeStudio = lazy(() => import('./CodeStudio').then((m) => ({ default: m.CodeStudio })))
+const DocumentsStudio = lazy(() => import('./DocumentsStudio').then((m) => ({ default: m.DocumentsStudio })))
+const MarkdownStudio = lazy(() => import('./MarkdownStudio').then((m) => ({ default: m.MarkdownStudio })))
+const CodeNode = lazyCard(() => import('./CodeStudio').then((m) => ({ default: m.CodeNode })))
+const DocumentNode = lazyCard(() => import('./DocumentsStudio').then((m) => ({ default: m.DocumentNode })))
+const MarkdownNode = lazyCard(() => import('./MarkdownStudio').then((m) => ({ default: m.MarkdownNode })))
 
 const nodeTypes = {
   console: ConsoleNode,
@@ -111,16 +128,20 @@ export function BoardScreen() {
           <Zoom />
         </div>
         <ResumeAllToast />
+        <NoAgentToast />
         <DrawingBanner />
+        <ConnectBanner />
         <ReportVisible />
         {modal === 'mission' && <MissionMap />}
         {modal === 'loops' && <LoopsModal />}
         {modal === 'memory' && <MemoryModal />}
         {modal === 'settings' && <SettingsModal />}
         {modal === 'usage' && <UsagePanel />}
-        {modal === 'code' && <CodeStudio />}
-        {modal === 'documents' && <DocumentsStudio />}
-        {modal === 'markdown' && <MarkdownStudio />}
+        <Suspense fallback={null}>
+          {modal === 'code' && <CodeStudio />}
+          {modal === 'documents' && <DocumentsStudio />}
+          {modal === 'markdown' && <MarkdownStudio />}
+        </Suspense>
       </div>
     </ReactFlowProvider>
   )
@@ -129,6 +150,8 @@ export function BoardScreen() {
 function Board() {
   const ws = useStore(workspace)!
   const tool = useStore((s) => s.tool)
+  // Keys must reach the board once the person has moved on from typing in a terminal.
+  const leaveTyping = () => (document.activeElement as HTMLElement | null)?.blur?.()
   const flow = useReactFlow()
   const { onNodesChange, onEdgesChange, setViewport, set } = useStore.getState()
   const [wiring, setWiring] = useState(false) // a wire is being dragged: every console becomes a drop target
@@ -136,17 +159,17 @@ function Board() {
 
   useEffect(() => set({ flow }), [flow])
 
-  // Backspace removes notes, text, ink and images; consoles only die from their own confirmed close.
+  // Backspace closes whatever is selected, consoles included; ⌘Z or the Undo button brings it back.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (t.closest('input, textarea, [contenteditable], .xterm')) return
       const s = useStore.getState()
-      if (e.key === 'Escape') s.set({ tool: 'select', modal: null, connecting: null })
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        workspace(s)
-          ?.nodes.filter((n) => n.selected && n.type !== 'console')
-          .forEach((n) => s.removeNode(n.id))
+      if (e.key === 'Escape' && !t.closest('.xterm')) s.set({ tool: 'select', modal: null, connecting: null })
+      if (t.closest('input, textarea, [contenteditable], .xterm')) return
+      if (e.key === 'Backspace' || e.key === 'Delete') s.deleteSelected()
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault()
+        s.undoDelete()
       }
       if ((e.metaKey || e.ctrlKey) && e.key === '0') {
         e.preventDefault()
@@ -159,6 +182,7 @@ function Board() {
 
   const place = (e: React.MouseEvent) => {
     const s = useStore.getState()
+    if (s.connecting) s.set({ connecting: null }) // clicking away ends Connect
     const pos = flow.screenToFlowPosition({ x: e.clientX, y: e.clientY })
     if (s.tool === 'spawn') s.addConsole(s.spawnAgent, pos)
     else if (s.tool === 'note')
@@ -174,8 +198,35 @@ function Board() {
   // every dragged node is judged on its own position, not only the one under the pointer.
   // Every group touched re-flows afterwards: it grows to take a newcomer, shrinks when one
   // leaves, and a drag inside a group reorders it.
-  const onDragStop = (_: unknown, _node: Node, dragged: Node[]) => {
+  // A terminal dropped on another terminal makes a group of the two (or joins the one it is in).
+  const dropOn = (e: Parameters<OnNodeDrag>[0], dragged: Node[]) => {
+    const at = 'clientX' in e ? e : e.changedTouches[0]
+    if (!at || !dragged.every((n) => n.type === 'console')) return undefined
     const nodes = workspace(useStore.getState())!.nodes
+    const over = consoleUnder(nodes, new Set(dragged.map((n) => n.id)), flow.screenToFlowPosition({ x: at.clientX, y: at.clientY }), (n) => absolute(nodes, n))
+    return over && dragged.every((n) => n.parentId === over.parentId) && over.parentId ? undefined : over // a sibling: that only reorders the group
+  }
+  const marked = useRef<string | null>(null)
+  // On the DOM directly: this runs on every pointer move, and a re-render of the board would not be free.
+  const mark = (over: Node | null) => {
+    const id = over?.id ?? null
+    if (id === marked.current) return
+    const node = (x: string | null) => (x ? document.querySelector(`.react-flow__node[data-id="${x}"]`) : null)
+    node(marked.current)?.classList.remove('drop-target', 'in-group')
+    node(id)?.classList.add('drop-target')
+    if (over?.parentId) node(id)?.classList.add('in-group')
+    marked.current = id
+  }
+  const onDrag: OnNodeDrag = (e, _node, dragged) => mark(dropOn(e, dragged) ?? null)
+
+  const onDragStop: OnNodeDrag = (e, _node, dragged) => {
+    mark(null)
+    const nodes = workspace(useStore.getState())!.nodes
+    const over = dropOn(e, dragged)
+    if (over && !over.parentId) {
+      useStore.getState().groupNodes([over.id, ...dragged.map((n) => n.id)])
+      return
+    }
     const moves = new Map<string, Node>()
     const touched = new Set<string>()
     for (const node of dragged) {
@@ -183,9 +234,11 @@ function Board() {
       const abs = absolute(nodes, node)
       const cx = abs.x + (node.measured?.width ?? 0) / 2
       const cy = abs.y + (node.measured?.height ?? 0) / 2
-      const host = nodes.find(
-        (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
-      )
+      const host =
+        nodes.find((g) => g.id === over?.parentId) ??
+        nodes.find(
+          (g) => g.type === 'group' && g.id !== node.id && cx > g.position.x && cx < g.position.x + (g.measured?.width ?? 0) && cy > g.position.y && cy < g.position.y + (g.measured?.height ?? 0),
+        )
       if (node.parentId) touched.add(node.parentId)
       if (host) touched.add(host.id)
       if (host?.id === node.parentId) continue
@@ -236,15 +289,18 @@ function Board() {
           const s = useStore.getState()
           if (!s.connectConsoles(c.source, c.target)) return
           const fromCard = ws.nodes.some((n) => n.id === c.source && n.type === 'memory')
-          s.notify(fromCard ? 'Wired: Push on the card types the memory into this console' : 'Linked: work passes along whenever the first one finishes')
+          s.notify(fromCard ? 'Connected: Push on the card types the memory into this console' : 'Linked: work passes along whenever the first one finishes')
         }}
         isValidConnection={(c) => c.source !== c.target}
         defaultViewport={ws.viewport ?? { x: 120, y: 80, zoom: 0.9 }}
         onMoveEnd={(_, vp) => setViewport(vp)}
         onPaneClick={place}
+        onNodeDrag={onDrag}
         onNodeDragStop={onDragStop}
-        onNodeClick={(_, n) => {
+        onSelectionStart={leaveTyping}
+        onNodeClick={(e, n) => {
           const s = useStore.getState()
+          if (!(e.target as HTMLElement).closest('.console-body, input, textarea')) leaveTyping()
           if (s.tool === 'eraser' && n.type !== 'console' && n.type !== 'group') s.removeNode(n.id)
         }}
         onPaneContextMenu={(e) => {
@@ -263,6 +319,7 @@ function Board() {
         zoomOnPinch
         zoomOnScroll={false}
         selectionOnDrag={tool === 'select'}
+        selectionMode={SelectionMode.Partial}
         panOnDrag={[1, 2]}
         deleteKeyCode={null}
         multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
@@ -271,23 +328,101 @@ function Board() {
         className={tool !== 'select' ? 'placing' : ''}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={34} size={1.7} color="#38342f" />
+        <Background variant={BackgroundVariant.Dots} gap={34} size={1.3} color="var(--grid)" />
       </ReactFlow>
       {menu && <ContextMenu at={menu} onClose={() => setMenu(null)} />}
+      {!ws.nodes.length && <EmptyBoard />}
+    </div>
+  )
+}
+
+// Connect covers the terminals with targets, so the way out stays in plain sight.
+function ConnectBanner() {
+  const connecting = useStore((s) => !!s.connecting)
+  if (!connecting) return null
+  return (
+    <div className="connect-banner">
+      Click the agents this orchestrator should command
+      <button className="btn primary" onClick={() => useStore.getState().set({ connecting: null })}>
+        Done
+      </button>
+    </div>
+  )
+}
+
+const INSTALL_CLAUDE = 'curl -fsSL https://claude.ai/install.sh | bash'
+
+// No coding agent on this Mac yet: offer to set up Claude Code. The command is typed into a real
+// terminal and left there, so that the person is the one who runs it.
+function NoAgentToast() {
+  const missing = useStore((s) => !s.installed.some((a) => a !== 'shell'))
+  if (!missing) return null
+  const install = async () => {
+    const s = useStore.getState()
+    const id = s.addConsole('shell', s.viewCenter())
+    for (let i = 0; i < 40 && !useStore.getState().live[id]; i++) await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 800)) // the shell's first prompt
+    await api.input(id, INSTALL_CLAUDE)
+    s.notify('The install command is ready in the terminal. Press Return to run it.')
+  }
+  const check = async () => {
+    const s = useStore.getState()
+    try {
+      const installed = await api.agents(true)
+      s.set({ installed })
+      if (!installed.some((a) => a !== 'shell')) s.notify('Still no coding agent found. Finish the install, then check again.')
+    } catch (e) {
+      s.notify(`Could not check: ${(e as Error).message}`)
+    }
+  }
+  return (
+    <div className="board-toast">
+      <span>
+        <div className="t">No coding agent found</div>
+        <div className="s">vibeboard runs the agents installed on your Mac. Claude Code takes a minute to set up.</div>
+      </span>
+      <button className="btn primary" onClick={install}>
+        Install Claude Code
+      </button>
+      <button className="btn" onClick={check}>
+        Check again
+      </button>
+    </div>
+  )
+}
+
+function EmptyBoard() {
+  const s = useStore.getState()
+  const missing = useStore((st) => !st.installed.some((a) => a !== 'shell'))
+  if (missing) return null
+  return (
+    <div className="empty-board">
+      <div>
+        <h2>Start with an agent</h2>
+        <p>Give it a job and watch it work. Right-click anywhere on the board for more.</p>
+        <div className="row">
+          <button className="btn primary" onClick={() => s.addConsole(s.settings.defaultAgent, s.viewCenter())}>
+            New agent
+          </button>
+          <button className="btn" onClick={() => s.set({ modal: 'presets' })}>
+            Ready-made team
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
 const TOOLS: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
-  { tool: 'select', icon: <MousePointer2 size={19} fill="currentColor" />, tip: 'Select' },
-  { tool: 'spawn', icon: <ClaudeMark size={20} />, tip: 'Spawn agent' },
-  { tool: 'shape', icon: <Copy size={19} />, tip: 'Shapes' },
+  { tool: 'select', icon: <MousePointer2 size={19} fill="currentColor" />, tip: 'Select and move things' },
+  { tool: 'spawn', icon: <ClaudeMark size={20} />, tip: 'New agent: pick one, then click the board' },
+  { tool: 'shape', icon: <Shapes size={19} />, tip: 'Shapes and sticky notes' },
 ]
 const TOOLS_2: { tool: Tool; icon: React.ReactNode; tip: string }[] = [
-  { tool: 'text', icon: <Type size={19} />, tip: 'Text' },
-  { tool: 'ink', icon: <PenTool size={18} />, tip: 'Ink' },
-  { tool: 'eraser', icon: <Eraser size={18} />, tip: 'Eraser' },
-  { tool: 'web', icon: <Globe size={19} />, tip: 'Web tile' },
+  { tool: 'text', icon: <Type size={19} />, tip: 'Text: click the board to write' },
+  { tool: 'ink', icon: <PenTool size={18} />, tip: 'Draw freehand' },
+  { tool: 'eraser', icon: <Eraser size={18} />, tip: 'Eraser: click what to remove' },
+  { tool: 'web', icon: <Globe size={19} />, tip: 'Web page: click the board to place it' },
 ]
 
 function LeftToolbar() {
@@ -308,7 +443,7 @@ function LeftToolbar() {
       <div className="toolbar">
         {TOOLS.map((t) => (
           <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
-            <button className={`tool-btn ${isOn(t.tool) ? 'active' : ''}`} data-tip={menu === t.tool ? undefined : t.tip} onClick={() => pick(t.tool)}>
+            <button className={`tool-btn ${isOn(t.tool) ? 'active' : ''}`} title={menu === t.tool ? undefined : t.tip} onClick={() => pick(t.tool)}>
               {t.tool === 'spawn' && tool === 'spawn' ? <ClaudeMark size={20} color="#fff" /> : t.icon}
             </button>
             {t.tool === 'shape' && menu === 'shape' && <ShapesMenu onClose={() => setMenu(null)} />}
@@ -316,7 +451,7 @@ function LeftToolbar() {
         ))}
         <button
           className="tool-btn"
-          data-tip="Shell console"
+          title="Shell console: a plain terminal"
           onClick={() => {
             const s = useStore.getState()
             s.addConsole('shell', s.viewCenter())
@@ -326,17 +461,17 @@ function LeftToolbar() {
         </button>
         {TOOLS_2.map((t) => (
           <span key={t.tool} style={{ position: 'relative', display: 'grid' }}>
-            <button className={`tool-btn ${tool === t.tool ? 'active' : ''}`} data-tip={tool === t.tool && t.tool === 'ink' ? undefined : t.tip} onClick={() => pick(t.tool)}>
+            <button className={`tool-btn ${tool === t.tool ? 'active' : ''}`} title={tool === t.tool && t.tool === 'ink' ? undefined : t.tip} onClick={() => pick(t.tool)}>
               {t.icon}
             </button>
             {t.tool === 'ink' && tool === 'ink' && <InkPanel />}
           </span>
         ))}
-        <button className="tool-btn" data-tip="Image" onClick={() => fileRef.current?.click()}>
+        <button className="tool-btn" title="Image: pick a picture from your Mac" onClick={() => fileRef.current?.click()}>
           <Image size={19} />
         </button>
         <div className="sep" />
-        <button className="tool-btn" data-tip="Fit board (⌘0)" onClick={() => flow.fitView({ padding: 0.12, duration: 400 })}>
+        <button className="tool-btn" title="Fit the board (⌘0)" onClick={() => flow.fitView({ padding: 0.12, duration: 400 })}>
           <Maximize2 size={18} />
         </button>
       </div>
@@ -368,7 +503,7 @@ function InkPanel() {
       <div className="section-label">Color</div>
       <div className="row">
         {INK_COLORS.map((c) => (
-          <button key={c} className={`swatch ${color === c ? 'on' : ''}`} style={{ background: c }} title={c} onClick={() => set({ inkColor: c })} />
+          <button key={c} className={`swatch ${color === c ? 'on' : ''}`} style={{ background: themed(c) }} title={c} onClick={() => set({ inkColor: c })} />
         ))}
         <label className={`swatch custom ${custom ? 'on' : ''}`} style={custom ? { background: color } : undefined} title="Custom color">
           <Pipette size={11} />
@@ -397,7 +532,7 @@ function SpawnMenu({ onClose }: { onClose: () => void }) {
   const list = all ? AGENTS : AGENTS.filter((a) => FEATURED.includes(a.id))
   return (
     <div className="menu spawn-menu nowheel" style={{ top: 'calc(50% - 250px)' }}>
-      <div className="menu-title">Spawn agent</div>
+      <div className="menu-title">New agent</div>
       {list.map((a) => (
         <button
           key={a.id}
@@ -448,23 +583,23 @@ function RightToolbar() {
   const running = useStore((st) => st.loops.filter((l) => l.active && (!l.scope || l.scope === st.active)).length)
   const [todo, setTodo] = useState(false)
   const items = [
-    { icon: <Layers size={18} />, tip: 'Mission map', run: () => s.set({ modal: 'mission' }) },
-    { icon: <ListChecks size={18} />, tip: 'To-do', run: () => setTodo((v) => !v) },
-    { icon: <Orbit size={18} />, tip: 'Orchestrator', run: () => addOrchestrator() },
-    { icon: <Folder size={18} />, tip: 'Code', run: () => s.set({ modal: 'code' }) },
-    { icon: <FileText size={18} />, tip: 'Documents', run: () => s.set({ modal: 'documents' }) },
-    { icon: <FileType size={18} />, tip: 'Markdown', run: () => s.set({ modal: 'markdown' }) },
-    { icon: <Repeat size={18} />, tip: 'Loops', run: () => s.set({ modal: 'loops' }) },
+    { icon: <Layers size={18} />, tip: 'Mission map: all your agents at a glance', run: () => s.set({ modal: 'mission' }) },
+    { icon: <ListChecks size={18} />, tip: 'To-do: checklist, board or calendar', run: () => setTodo((v) => !v) },
+    { icon: <Orbit size={18} />, tip: 'Orchestrator: give orders to several agents', run: () => addOrchestrator() },
+    { icon: <Folder size={18} />, tip: 'Code: browse and edit the files of this project', run: () => s.set({ modal: 'code' }) },
+    { icon: <FileText size={18} />, tip: 'Documents: have your agent write docs about this project', run: () => s.set({ modal: 'documents' }) },
+    { icon: <FileType size={18} />, tip: 'Markdown: read and edit the notes of this project', run: () => s.set({ modal: 'markdown' }) },
+    { icon: <Repeat size={18} />, tip: 'Loops: repeat an instruction automatically', run: () => s.set({ modal: 'loops' }) },
   ]
   return (
     <div className="toolbar right">
       {items.map((i) => (
         <span key={i.tip} style={{ position: 'relative', display: 'grid' }}>
-          <button className={`tool-btn ${i.tip === 'To-do' && todo ? 'on' : ''}`} data-tip={i.tip === 'To-do' && todo ? undefined : i.tip} onClick={i.run}>
+          <button className={`tool-btn ${i.tip.startsWith('To-do') && todo ? 'on' : ''}`} title={i.tip.startsWith('To-do') && todo ? undefined : i.tip} onClick={i.run}>
             {i.icon}
-            {i.tip === 'Loops' && running > 0 && <span className="tool-badge">{running}</span>}
+            {i.tip.startsWith('Loops') && running > 0 && <span className="tool-badge">{running}</span>}
           </button>
-          {i.tip === 'To-do' && todo && <TodoMenu onClose={() => setTodo(false)} />}
+          {i.tip.startsWith('To-do') && todo && <TodoMenu onClose={() => setTodo(false)} />}
         </span>
       ))}
     </div>
@@ -498,11 +633,11 @@ function Zoom() {
   const flow = useReactFlow()
   return (
     <div className="pill zoom">
-      <button className="icon-btn sm" onClick={() => flow.zoomOut({ duration: 200 })}>
+      <button className="icon-btn sm" title="Zoom out" onClick={() => flow.zoomOut({ duration: 200 })}>
         <Minus size={14} />
       </button>
-      <span onDoubleClick={() => flow.zoomTo(1, { duration: 250 })}>{Math.round(zoom * 100)}%</span>
-      <button className="icon-btn sm" onClick={() => flow.zoomIn({ duration: 200 })}>
+      <span title="Double-click for 100%" onDoubleClick={() => flow.zoomTo(1, { duration: 250 })}>{Math.round(zoom * 100)}%</span>
+      <button className="icon-btn sm" title="Zoom in" onClick={() => flow.zoomIn({ duration: 200 })}>
         <Plus size={14} />
       </button>
     </div>
@@ -564,7 +699,7 @@ function InkLayer() {
         setPts(null)
       }}
     >
-      {pts && <path d={toD(pts)} fill="none" stroke={color} strokeWidth={width * flow.getZoom()} strokeLinecap="round" strokeLinejoin="round" />}
+      {pts && <path d={toD(pts)} fill="none" stroke={themed(color)} strokeWidth={width * flow.getZoom()} strokeLinecap="round" strokeLinejoin="round" />}
     </svg>
   )
 }

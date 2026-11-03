@@ -14,6 +14,7 @@ import { api, connectEvents, type LiveSession, type Loop, type LinkMode, type Di
 import { agentById } from '../shared/agents.js'
 import { CONSOLE_SIZE, GROUP_HEAD, GROUP_PAD, freeSpot, gridLayout, sizeOf, wouldCycle } from './layout'
 import type { TeamTemplate } from './teams'
+import type { ThemeMode } from './theme'
 
 export { CONSOLE_SIZE, freeSpot }
 
@@ -31,6 +32,7 @@ export type ConsoleData = {
   role?: string // what this agent is for; travels with every hand-off it receives
   lead?: boolean // a Claude that can bring in helper consoles (server/helpers.mjs)
   profile?: string // account profile id: runs the CLI on that profile's own sign-in
+  view?: 'simple' | 'terminal' // what the console shows; a console saved before this existed is a terminal
   epoch: number
 }
 export type LinkKind = 'handoff' | 'review' | 'forward' | 'condition' | 'context'
@@ -58,7 +60,8 @@ export type InkData = { paths: string[]; color: string; width?: number }
 
 export type Memory = { id: string; title: string; kind: string; text: string; enabled: boolean; scanned?: boolean }
 export type Workspace = { id: string; name: string; nodes: Node[]; edges: Edge[]; viewport?: Viewport }
-export type Project = { path: string; name: string; workspaces: Workspace[]; activeWs: string; memories: Memory[]; openedAt: number }
+// `folders`: folders outside the project connected to it (a second brain): agents and Studios reach them.
+export type Project = { path: string; name: string; workspaces: Workspace[]; activeWs: string; memories: Memory[]; folders?: string[]; openedAt: number }
 export type Preset = { id: string; name: string; agents: string[]; label?: string }
 
 export type Tool = 'select' | 'spawn' | 'note' | 'text' | 'web' | 'ink' | 'eraser' | 'image' | 'kanban' | 'shape'
@@ -66,7 +69,7 @@ export type Modal = null | 'mission' | 'loops' | 'memory' | 'usage' | 'composer'
 // A second sign-in of a CLI (its own config folder on disk), so two accounts can run side by side.
 export type Profile = { id: string; name: string; agent: string }
 // `active`: the profile each CLI's new consoles start on (none: the CLI's own default sign-in).
-export type Settings = { yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[]; active?: Record<string, string> }
+export type Settings = { theme?: ThemeMode; simpleView?: boolean; yolo: boolean; fontSize: number; defaultAgent: string; speak?: boolean; notify?: boolean; profiles?: Profile[]; active?: Record<string, string> }
 export type UsageView = 'usage' | 'tokens' | 'accounts'
 
 // Stable fallback so selectors never return a fresh [] (that re-renders forever).
@@ -99,6 +102,9 @@ type S = {
   projects: Project[]
   active: string | null
   live: Record<string, LiveSession>
+  pendingPrompt: Record<string, string> // sent from the simple view, not in the transcript yet
+  linkDown: boolean // the page has lost the server and is trying to get it back
+  exits: Record<string, number> // how each console's process last ended
   installed: string[]
   loops: Loop[]
   scans: Scan[]
@@ -110,6 +116,7 @@ type S = {
   connecting: string | null // the orchestrator whose Connect mode is on
   modal: Modal
   studioPath: string | null // the note the Markdown studio opens on
+  studioRoot: string | null // the connected folder it opens on, when not the project
   toast: string | null
   settings: Settings
   presets: Preset[]
@@ -122,7 +129,9 @@ type S = {
 
   init: () => void
   set: (patch: Partial<S>) => void
-  notify: (msg: string) => void
+  notify: (msg: string, action?: { label: string; run: () => void }) => void
+  toastAction: { label: string; run: () => void } | null
+  confirming: { title: string; detail: string; yes: string; answer: (ok: boolean) => void } | null
   openProject: (path: string) => void
   goHome: () => void
   forgetProject: (path: string) => void
@@ -140,6 +149,8 @@ type S = {
   reorderNode: (id: string, to: 'front' | 'back') => void
   updateData: (id: string, patch: Record<string, unknown>) => void
   removeNode: (id: string) => Promise<void>
+  deleteSelected: () => Promise<void>
+  undoDelete: () => Promise<void>
   addConsole: (agent: string, center: { x: number; y: number }, extra?: Partial<ConsoleData>, parentId?: string, reveal?: boolean) => string
   restartConsole: (id: string, fresh?: boolean) => Promise<void>
   resumeConsole: (id: string) => Promise<void>
@@ -147,6 +158,10 @@ type S = {
   spawnMany: (agents: string[], label?: string, extras?: Partial<ConsoleData>[], at?: { x: number; y: number }) => string[]
   spawnTeam: (team: TeamTemplate) => void
   groupSelected: (label?: string) => void
+  groupNodes: (ids: string[], label?: string) => string | null
+  resizeNode: (id: string, width: number, height: number) => void
+  connectFolder: (path: string) => void
+  disconnectFolder: (path: string) => void
   fitGroup: (id: string) => void
   ungroup: (id: string) => void
   moveToGroup: (id: string, gid: string | null) => void
@@ -283,6 +298,30 @@ function fitted(nodes: Node[], gid: string) {
 // A lead brought in a helper (server/helpers.mjs), which the server already runs: it joins the
 // lead's group (last in reading order) or sits beside the lead, with a dashed line back to it.
 // Any workspace, not just the open one: the lead may be working while you look elsewhere.
+// The browser's own confirm() freezes the page, terminals included, until it is answered.
+const askToConfirm = (title: string, detail: string, yes: string) =>
+  new Promise<boolean>((resolve) =>
+    useStore.setState({
+      confirming: {
+        title,
+        detail,
+        yes,
+        answer: (ok) => {
+          useStore.setState({ confirming: null })
+          resolve(ok)
+        },
+      },
+    }),
+  )
+
+// ponytail: one level of undo, and it restores the board as it was, so it expires before much else has moved.
+const UNDO_TOAST_MS = 7000
+const UNDO_WINDOW_MS = 60_000
+let lastDeleted: { wsId: string; nodes: Node[]; edges: Edge[]; consoleIds: string[]; at: number } | null = null
+
+// New agents open on the real terminal, where the person has full control; Settings can make it the simple view.
+const consoleView = (agent: string): ConsoleData['view'] => (agent !== 'shell' && useStore.getState().settings.simpleView === true ? 'simple' : 'terminal')
+
 function addHelper(e: Extract<ServerEvent, { type: 'helper' }>) {
   const s = useStore.getState()
   const hit = findConsole(s, e.parent)
@@ -299,7 +338,7 @@ function addHelper(e: Extract<ServerEvent, { type: 'helper' }>) {
     style: { ...CONSOLE_SIZE },
     dragHandle: '.console-head',
     ...(lead.parentId ? { parentId: lead.parentId } : {}),
-    data: { agent: e.agent, name: e.name, dot: lead.data.dot, cwd: e.cwd, yolo: e.yolo, role: e.role || undefined, epoch: 0 },
+    data: { agent: e.agent, name: e.name, dot: lead.data.dot, cwd: e.cwd, yolo: e.yolo, role: e.role || undefined, view: consoleView(e.agent), epoch: 0 },
   }
   const edge: Edge = { id: `k-${e.id}`, source: lead.id, target: e.id, type: 'helper' }
   glide()
@@ -356,6 +395,9 @@ export const useStore = create<S>((set, get) => {
     active: null,
     live: {},
     installed: ['claude', 'shell'],
+    pendingPrompt: {},
+    linkDown: false,
+    exits: {},
     loops: [],
     scans: [],
     docJobs: [],
@@ -366,6 +408,7 @@ export const useStore = create<S>((set, get) => {
     connecting: null,
     modal: null,
     studioPath: null,
+    studioRoot: null,
     toast: null,
     settings: { yolo: false, fontSize: 13, defaultAgent: 'claude' },
     presets: DEFAULT_PRESETS,
@@ -382,8 +425,11 @@ export const useStore = create<S>((set, get) => {
         api
           .getState()
           .then((saved) => {
-            set({ ...(saved as Partial<S>), loaded: true })
+            const { recovered, ...state } = saved as Partial<S> & { recovered?: string }
+            set({ ...state, loaded: true })
             set((s) => ({ ready: s.liveReady }))
+            if (recovered === 'backup') get().notify('Your board file was damaged. It is back as it was at the last backup.')
+            if (recovered === 'empty') get().notify('Your board file was damaged, so this is a fresh board. The old file is kept in ~/.vibeboard.')
           })
           .catch(() => setTimeout(load, 1000))
       load()
@@ -408,6 +454,7 @@ export const useStore = create<S>((set, get) => {
             if (e.status === 'done') autoHandoff(e.id)
           }
         } else if (e.type === 'exit') {
+          set((s) => ({ exits: { ...s.exits, [e.id]: e.code } }))
           forgetLaunch((id) => id !== e.id)
           set((s) => {
             const live = { ...s.live }
@@ -442,16 +489,26 @@ export const useStore = create<S>((set, get) => {
             else delete handing[`${e.from}>${e.to}`]
             return { handing }
           })
+        else if (e.type === 'ask' || e.type === 'activity' || e.type === 'conversation')
+          set((s) => {
+            const cur = s.live[e.id]
+            if (!cur) return {}
+            const next =
+              e.type === 'ask' ? { ...cur, ask: e.ask } : e.type === 'activity' ? { ...cur, activity: e.text } : { ...cur, tick: (cur.tick ?? 0) + 1, started: cur.started || e.started }
+            return { live: { ...s.live, [e.id]: next } }
+          })
         else if (e.type === 'subagents')
           set((s) => (s.live[e.id] ? { live: { ...s.live, [e.id]: { ...s.live[e.id], subagents: e.subagents } } } : {}))
         else if (e.type === 'helper') addHelper(e)
-      })
+      }, (up) => set({ linkDown: !up }))
     },
 
     set: (patch) => set(patch),
-    notify: (msg) => {
-      set({ toast: msg })
-      setTimeout(() => get().toast === msg && set({ toast: null }), 2600)
+    toastAction: null,
+    confirming: null,
+    notify: (msg, action) => {
+      set({ toast: msg, toastAction: action ?? null })
+      setTimeout(() => get().toast === msg && set({ toast: null, toastAction: null }), action ? UNDO_TOAST_MS : 2600)
     },
 
     openProject: (path) =>
@@ -479,7 +536,7 @@ export const useStore = create<S>((set, get) => {
       const p = project(get())
       if (!p) return
       const ids = p.workspaces.flatMap((w) => consoles(w.nodes).map((n) => n.id)).filter((id) => get().live[id])
-      if (ids.length && !confirm(`Close ${p.name}? ${ids.length} running console${ids.length > 1 ? 's' : ''} will be stopped. The board is kept.`)) return
+      if (ids.length && !(await askToConfirm(`Close ${p.name}?`, `${ids.length} running agent${ids.length > 1 ? 's' : ''} will stop. The board is kept.`, 'Close project'))) return
       await Promise.all(ids.map((id) => api.kill(id).catch(() => {})))
       set({ active: null, modal: null })
     },
@@ -497,7 +554,7 @@ export const useStore = create<S>((set, get) => {
       if (!p || p.workspaces.length === 1) return get().notify('A project keeps at least one workspace')
       const ws = p.workspaces.find((w) => w.id === id)!
       const ids = consoles(ws.nodes).map((n) => n.id).filter((cid) => get().live[cid])
-      if (ids.length && !confirm(`Close ${ws.name}? ${ids.length} running console${ids.length > 1 ? 's' : ''} will be stopped.`)) return
+      if (ids.length && !(await askToConfirm(`Close ${ws.name}?`, `${ids.length} running agent${ids.length > 1 ? 's' : ''} will stop.`, 'Close workspace'))) return
       await Promise.all(ids.map((cid) => api.kill(cid).catch(() => {})))
       updateProject((pr) => {
         const workspaces = pr.workspaces.filter((w) => w.id !== id)
@@ -558,9 +615,43 @@ export const useStore = create<S>((set, get) => {
       if (node.parentId) get().fitGroup(node.parentId)
     },
 
+    // The Delete key. Quick on purpose, so it has a way back: the board returns as it was, and Claude
+    // consoles pick their conversation up again. A shell's running program cannot come back.
+    deleteSelected: async () => {
+      const ws = workspace(get())
+      const chosen = ws?.nodes.filter((n) => n.selected) ?? []
+      if (!ws || !chosen.length) return
+      const consoleIds = chosen.filter((n) => n.type === 'console').map((n) => n.id)
+      lastDeleted = { wsId: ws.id, nodes: ws.nodes, edges: ws.edges, consoleIds, at: Date.now() }
+      await Promise.all(chosen.map((n) => get().removeNode(n.id)))
+      const agents = consoleIds.length
+      const others = chosen.length - agents
+      const words = [agents && `${agents} agent${agents > 1 ? 's' : ''} closed`, others && `${others} item${others > 1 ? 's' : ''} deleted`].filter(Boolean).join(', ')
+      get().notify(words.charAt(0).toUpperCase() + words.slice(1), { label: 'Undo', run: () => void get().undoDelete() })
+    },
+
+    undoDelete: async () => {
+      const last = lastDeleted
+      if (!last || Date.now() - last.at > UNDO_WINDOW_MS || workspace(get())?.id !== last.wsId) return
+      lastDeleted = null
+      set({ toast: null, toastAction: null })
+      await Promise.all(last.consoleIds.map(waitGone))
+      const restored = last.nodes.map((n) => {
+        if (!last.consoleIds.includes(n.id)) return n
+        const d = n.data as ConsoleData
+        const resume = d.resumable ?? d.lastSessionId
+        return { ...n, selected: false, data: { ...d, epoch: d.epoch + 1, sessionId: undefined, resumeOffer: false, lastSessionId: resume, resumeNext: !!resume } }
+      })
+      const nodeIds = new Set(restored.map((n) => n.id))
+      const edgeIds = new Set(last.edges.map((e) => e.id))
+      updateWs((w) => ({ ...w, nodes: [...restored, ...w.nodes.filter((n) => !nodeIds.has(n.id))], edges: [...last.edges, ...w.edges.filter((e) => !edgeIds.has(e.id))] }))
+    },
+
     addConsole: (agent, center, extra, parentId, reveal = true) => {
       const id = `c-${uid()}`
       const p = project(get())!
+      // Connect mode covers every console with a target: a new agent must open ready to be typed in.
+      if (get().connecting) set({ connecting: null })
       // The account picked with "Use" in the accounts panel, while it still exists.
       const { active, profiles } = get().settings
       const account = active?.[agent] && profiles?.some((x) => x.id === active[agent]) ? active[agent] : undefined
@@ -577,6 +668,7 @@ export const useStore = create<S>((set, get) => {
           dot: DOTS[Math.floor(Math.random() * DOTS.length)],
           cwd: p.path,
           yolo: get().settings.yolo,
+          view: consoleView(agent),
           epoch: 0,
           ...(account ? { profile: account } : {}),
           ...extra,
@@ -686,14 +778,22 @@ export const useStore = create<S>((set, get) => {
     },
 
     groupSelected: (label) => {
+      const ids = workspace(get())?.nodes.filter((n) => n.selected && n.type !== 'group' && !n.parentId).map((n) => n.id) ?? []
+      if (!ids.length) return get().notify('Select consoles on the board first')
+      const gid = get().groupNodes(ids, label)
+      if (gid) setTimeout(() => get().frame([gid]), 60)
+    },
+
+    groupNodes: (list, label) => {
       const ws = workspace(get())
-      if (!ws) return
-      const picked = ws.nodes.filter((n) => n.selected && n.type !== 'group' && !n.parentId)
-      if (!picked.length) return get().notify('Select consoles on the board first')
+      if (!ws) return null
+      const ids = new Set(list)
+      // A member may be leaving another group, where its position is relative to that group.
+      const picked = ws.nodes.filter((n) => ids.has(n.id) && n.type !== 'group').map((n) => ({ ...n, position: absolute(ws.nodes, n) }))
+      if (!picked.length) return null
       // Members are re-laid in a compact grid (reading order), so the frame never swallows
       // a console that is not part of the group.
       const { slots: slot, width, height } = gridLayout(picked)
-      const ids = new Set(picked.map((n) => n.id))
       const origin = freeSpot(
         ws.nodes.filter((n) => !ids.has(n.id)),
         { x: Math.min(...picked.map((n) => n.position.x)) - GROUP_PAD, y: Math.min(...picked.map((n) => n.position.y)) - GROUP_PAD - GROUP_HEAD, width, height },
@@ -707,13 +807,39 @@ export const useStore = create<S>((set, get) => {
         style: { width, height },
         data: { label: label || `Group ${groupCount + 1}`, color: GROUP_COLORS[groupCount % GROUP_COLORS.length] },
       }
-      updateWs((w) => ({
-        ...w,
+      const left = new Set(ws.nodes.filter((n) => ids.has(n.id) && n.parentId).map((n) => n.parentId!))
+      glide()
+      updateWs((w) => {
         // Parents must come before children in React Flow's node array.
-        nodes: [group, ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, selected: false, position: slot.get(n.id)! } : n))],
-      }))
-      setTimeout(() => get().frame([gid]), 60)
+        let nodes: Node[] = [group, ...w.nodes.map((n) => (ids.has(n.id) ? { ...n, parentId: gid, extent: undefined, selected: false, position: slot.get(n.id)! } : n))]
+        for (const g of left) nodes = fitted(nodes, g)
+        return { ...w, nodes }
+      })
+      return gid
     },
+
+    // An exact size for a console or a web tile. It glides there, and the view follows if it no longer fits.
+    resizeNode: (id, width, height) => {
+      glide()
+      updateWs((w) => {
+        const n = w.nodes.find((x) => x.id === id)
+        if (!n) return w
+        const nodes = w.nodes.map((x) => (x.id === id ? { ...x, width, height, measured: { width, height }, style: { ...x.style, width, height } } : x))
+        return { ...w, nodes: n.parentId ? fitted(nodes, n.parentId) : nodes }
+      })
+      setTimeout(() => {
+        const flow = get().flow
+        const target = flow?.getNode(id)?.parentId ?? id // in a group, the whole group has to stay in view
+        const box = flow?.getNodesBounds([target])
+        if (!flow || !box) return
+        const tl = flow.flowToScreenPosition(box)
+        const br = flow.flowToScreenPosition({ x: box.x + box.width, y: box.y + box.height })
+        if (tl.x < 0 || tl.y < 0 || br.x > innerWidth || br.y > innerHeight) get().frame([target])
+      }, 360)
+    },
+
+    connectFolder: (path) => updateProject((p) => (p.folders?.includes(path) || p.path === path ? p : { ...p, folders: [...(p.folders ?? []), path] })),
+    disconnectFolder: (path) => updateProject((p) => ({ ...p, folders: p.folders?.filter((f) => f !== path) })),
 
     fitGroup: (id) => {
       glide()
@@ -868,14 +994,21 @@ const snapshot = () => {
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let saving = false
 let dirty = false
+let saveFailures = 0
+const MAX_SAVE_RETRY_MS = 30_000
+const SAVE_FAILURES_BEFORE_TELLING = 3
 async function save() {
   saveTimer = undefined
   if (saving) return void (dirty = true)
   saving = true
   try {
     await api.putState(snapshot())
+    saveFailures = 0
   } catch (e) {
-    useStore.getState().notify(`Save failed: ${(e as Error).message}`)
+    // Nothing is lost while the page stays open: the board goes on trying, and says so only if it lasts.
+    saveFailures++
+    if (saveFailures === SAVE_FAILURES_BEFORE_TELLING) useStore.getState().notify(`Your board could not be saved: ${(e as Error).message}. Still trying.`)
+    saveTimer = setTimeout(save, Math.min(MAX_SAVE_RETRY_MS, 1000 * 2 ** saveFailures))
   } finally {
     saving = false
     if (dirty) {
@@ -899,11 +1032,19 @@ useStore.subscribe((s, prev) => {
   document.title = waiting ? `(${waiting}) vibeboard` : 'vibeboard'
 })
 
-// Edits from the last 400ms before a reload. Best effort: keepalive bodies are capped at 64KB.
+// Edits from the last 400ms before the window goes away. Leaving the page is the reliable moment to
+// save, because a request made while it unloads is capped at 64KB and a board with pictures is larger.
+addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden' || !saveTimer) return
+  clearTimeout(saveTimer)
+  save()
+})
+const KEEPALIVE_LIMIT = 60_000
 addEventListener('pagehide', () => {
   if (!saveTimer) return
   clearTimeout(saveTimer)
-  fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(snapshot()), keepalive: true }).catch(() => {})
+  const body = JSON.stringify(snapshot())
+  fetch('/api/state', { method: 'PUT', headers: { 'content-type': 'application/json' }, body, keepalive: body.length < KEEPALIVE_LIMIT }).catch((e) => console.error('last save failed', e))
 })
 
 export const agentColor = (id: string) => agentById(id)?.color ?? '#9a948c'

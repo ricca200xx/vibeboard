@@ -1,7 +1,9 @@
 // Usage: the plan's limits as the CLI's own `/usage` screen shows them, and tokens per agent
 // from each agent's local session logs. Nothing leaves the machine.
+import { isMainThread, parentPort, Worker } from 'node:worker_threads'
 import fs from 'node:fs'
 import path from 'node:path'
+import readline from 'node:readline'
 import pty from 'node-pty'
 import headless from '@xterm/headless'
 
@@ -33,7 +35,7 @@ export function parseUsageScreen(text) {
   return { limits, insights }
 }
 
-const screenOf = (term) => {
+export const screenOf = (term) => {
   const b = term.buffer.active
   const out = []
   for (let i = 0; i < b.length; i++) out.push(b.getLine(i)?.translateToString(true) ?? '')
@@ -51,27 +53,28 @@ export function modelName(id) {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? `.${m[3]}` : ''}` : String(id)
 }
 
-// One log file -> tokens per local day [input, output, cache], requests per model, first and last timestamp.
-export function claudeLog(text) {
+// One log file, fed a line at a time -> tokens per local day [input, output, cache], requests per
+// model, first and last timestamp. Line by line: a transcript can be hundreds of MB.
+function claudeLines() {
   const days = {}
   const models = {}
   const seen = new Set() // one line per content block, all carrying the same message usage
   let first = null
   let last = null
-  for (const line of text.split('\n')) {
-    if (!line.includes('"usage"')) continue
+  const add = (line) => {
+    if (!line.includes('"usage"')) return
     let e
     try {
       e = JSON.parse(line)
     } catch {
-      continue
+      return
     }
     const u = e.message?.usage
     const day = u && e.timestamp && localDay(e.timestamp)
-    if (!day) continue
+    if (!day) return
     const id = e.message.id || e.requestId
     if (id) {
-      if (seen.has(id)) continue
+      if (seen.has(id)) return
       seen.add(id)
     }
     const d = (days[day] ||= [0, 0, 0])
@@ -82,28 +85,28 @@ export function claudeLog(text) {
     first ??= e.timestamp
     last = e.timestamp
   }
-  return { days, models, first, last }
+  return { add, done: () => ({ days, models, first, last }) }
 }
 
 // Codex rollouts: `token_count` events carry the turn's usage; cached input is part of input there.
-export function codexLog(text) {
+function codexLines() {
   const days = {}
   const models = {}
   let model = null
   let first = null
   let last = null
-  for (const line of text.split('\n')) {
-    if (!line.includes('"token_count"') && !line.includes('"turn_context"')) continue
+  const add = (line) => {
+    if (!line.includes('"token_count"') && !line.includes('"turn_context"')) return
     let e
     try {
       e = JSON.parse(line)
     } catch {
-      continue
+      return
     }
     if (e.type === 'turn_context' && e.payload?.model) model = e.payload.model
     const u = e.payload?.type === 'token_count' ? e.payload.info?.last_token_usage : null
     const day = u && e.timestamp && localDay(e.timestamp)
-    if (!day) continue
+    if (!day) return
     const cached = u.cached_input_tokens || 0
     const d = (days[day] ||= [0, 0, 0])
     d[0] += Math.max(0, (u.input_tokens || 0) - cached)
@@ -113,7 +116,21 @@ export function codexLog(text) {
     first ??= e.timestamp
     last = e.timestamp
   }
-  return { days, models, first, last }
+  return { add, done: () => ({ days, models, first, last }) }
+}
+
+const whole = (make) => (text) => {
+  const p = make()
+  for (const line of text.split('\n')) p.add(line)
+  return p.done()
+}
+export const claudeLog = whole(claudeLines)
+export const codexLog = whole(codexLines)
+
+async function readLog(file, make) {
+  const p = make()
+  for await (const line of readline.createInterface({ input: fs.createReadStream(file, 'utf8'), crlfDelay: Infinity })) p.add(line)
+  return p.done()
 }
 
 async function jsonlFiles(dir, out = []) {
@@ -131,45 +148,79 @@ async function jsonlFiles(dir, out = []) {
   return out
 }
 
-export function createUsage({ dataDir, env, shell, claudeDirs, codexDirs, profileEnv }) {
-  // ---------- tokens from local logs (async, cached per file on mtime+size) ----------
-  const fileCache = new Map()
-  async function scan(dirs, parse) {
-    const agg = { days: {}, models: {}, sessions: 0, longestMs: 0, first: null }
-    for (const base of dirs()) {
-      for (const file of await jsonlFiles(base)) {
-        let st
-        try {
-          st = await fs.promises.stat(file)
-        } catch {
-          continue
-        }
-        const key = `${st.mtimeMs}:${st.size}`
-        let entry = fileCache.get(file)
-        if (entry?.key !== key) {
-          entry = { key, ...parse(await fs.promises.readFile(file, 'utf8')) }
-          fileCache.set(file, entry)
-        }
-        if (!entry.first) continue
-        for (const [day, [i, o, c]] of Object.entries(entry.days)) {
-          const d = (agg.days[day] ||= [0, 0, 0])
-          d[0] += i
-          d[1] += o
-          d[2] += c
-        }
-        for (const [m, n] of Object.entries(entry.models)) agg.models[m] = (agg.models[m] || 0) + n
-        // A sub-agent's own log is part of its parent's session, not a session of its own.
-        if (!file.includes(`${path.sep}subagents${path.sep}`)) {
-          agg.sessions++
-          agg.longestMs = Math.max(agg.longestMs, Date.parse(entry.last) - Date.parse(entry.first) || 0)
-        }
-        if (!agg.first || entry.first < agg.first) agg.first = entry.first
+// ---------- tokens from local logs (async, cached per file on mtime+size) ----------
+const fileCache = new Map()
+async function scan(dirs, make) {
+  const agg = { days: {}, models: {}, sessions: 0, longestMs: 0, first: null }
+  for (const base of dirs) {
+    for (const file of await jsonlFiles(base)) {
+      let st
+      try {
+        st = await fs.promises.stat(file)
+      } catch {
+        continue
       }
+      const key = `${st.mtimeMs}:${st.size}`
+      let entry = fileCache.get(file)
+      if (entry?.key !== key) {
+        try {
+          entry = { key, ...(await readLog(file, make)) }
+        } catch {
+          continue // gone or unreadable between the listing and the read
+        }
+        fileCache.set(file, entry)
+      }
+      if (!entry.first) continue
+      for (const [day, [i, o, c]] of Object.entries(entry.days)) {
+        const d = (agg.days[day] ||= [0, 0, 0])
+        d[0] += i
+        d[1] += o
+        d[2] += c
+      }
+      for (const [m, n] of Object.entries(entry.models)) agg.models[m] = (agg.models[m] || 0) + n
+      // A sub-agent's own log is part of its parent's session, not a session of its own.
+      if (!file.includes(`${path.sep}subagents${path.sep}`)) {
+        agg.sessions++
+        agg.longestMs = Math.max(agg.longestMs, Date.parse(entry.last) - Date.parse(entry.first) || 0)
+      }
+      if (!agg.first || entry.first < agg.first) agg.first = entry.first
     }
-    agg.models = Object.fromEntries(Object.entries(agg.models).map(([m, n]) => [modelName(m), n]))
-    return agg
   }
-  const tokens = async () => ({ claude: await scan(claudeDirs, claudeLog), codex: await scan(codexDirs, codexLog), scannedAt: Date.now() })
+  agg.models = Object.fromEntries(Object.entries(agg.models).map(([m, n]) => [modelName(m), n]))
+  return agg
+}
+
+export function createUsage({ dataDir, env, shell, claudeDirs, codexDirs, profileEnv }) {
+  // Parsing a large log takes seconds, and on this thread every terminal would wait for it. One worker
+  // keeps its per-file cache for good, and answers overlapping requests together.
+  let worker = null
+  let running = null
+  const tokens = () => {
+    if (running) return running
+    worker ??= new Worker(new URL(import.meta.url))
+    worker.unref()
+    running = new Promise((resolve, reject) => {
+      const done = () => {
+        worker?.off('message', onMessage)
+        worker?.off('error', onError)
+        running = null
+      }
+      const onMessage = (r) => {
+        done()
+        if (r.error) reject(new Error(r.error))
+        else resolve(r.result)
+      }
+      const onError = (e) => {
+        done()
+        worker = null // the next request starts a fresh one
+        reject(e)
+      }
+      worker.on('message', onMessage)
+      worker.on('error', onError)
+      worker.postMessage({ claude: claudeDirs(), codex: codexDirs() })
+    })
+    return running
+  }
 
   // ---------- plan limits from a hidden `claude` running /usage ----------
   // It starts in an empty folder of ours with no user or project settings, so none of the user's
@@ -251,7 +302,17 @@ export function createUsage({ dataDir, env, shell, claudeDirs, codexDirs, profil
 }
 
 // `node server/usage.mjs`: checks the parsers on samples shaped like the real screen and logs.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (!isMainThread) {
+  parentPort.on('message', async ({ claude, codex }) => {
+    try {
+      parentPort.postMessage({ result: { claude: await scan(claude, claudeLines), codex: await scan(codex, codexLines), scannedAt: Date.now() } })
+    } catch (e) {
+      parentPort.postMessage({ error: e.message })
+    }
+  })
+}
+
+if (isMainThread && import.meta.url === `file://${process.argv[1]}`) {
   const assert = (await import('node:assert/strict')).default
   const screen = [
     '  Current session',

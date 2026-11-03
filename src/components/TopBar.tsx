@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Briefcase, ChevronDown, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
+import { Briefcase, ChevronDown, ChevronLeft, Folder, FolderOpen, Info, Plus, Settings, X } from 'lucide-react'
 import { consoles, project, useStore } from '../store'
 import { ClaudeMark } from './icons'
+import { ThemeToggle } from './Panels'
 import { fmtTokens, loadLimits, loadTokens, useUsage } from './UsagePanel'
 
 const todayKey = () => {
@@ -34,16 +35,28 @@ export function TopBar() {
     return () => clearInterval(t)
   }, [hasClaude])
 
+  // However many workspaces there are, the current one is in view.
+  useEffect(() => {
+    const keep = () => document.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    keep()
+    // The space for the tabs changes as the pills on the right fill in.
+    const watcher = new ResizeObserver(keep)
+    watcher.observe(document.querySelector('.tab-list')!)
+    return () => watcher.disconnect()
+  }, [p.activeWs, p.workspaces.length])
+
   return (
     <div className="topbar">
-      <button className="pill" onClick={s.goHome}>
-        <ArrowLeft size={16} /> Back to home
+      <h1 className="sr-only">{p.name}</h1>
+      <button className="pill" title="Back to your projects: agents keep running" onClick={s.goHome}>
+        <ChevronLeft size={16} /> Home
       </button>
 
       <div className="pill tabs" style={{ position: 'relative' }}>
-        <button className="project" onClick={() => setProjMenu((v) => !v)}>
+        <button className="project" title="Switch project" onClick={() => setProjMenu((v) => !v)}>
           <Folder size={15} fill="currentColor" strokeWidth={1.5} /> {p.name} <ChevronDown size={14} color="var(--muted)" />
         </button>
+        <div className="tab-list">
         {p.workspaces.map((w) => (
           <button
             key={w.id}
@@ -67,6 +80,7 @@ export function TopBar() {
             <span className="count">{consoles(w.nodes).length}</span>
             <span
               className="x"
+              title="Close this workspace"
               onClick={(e) => {
                 e.stopPropagation()
                 s.closeWorkspace(w.id)
@@ -76,12 +90,13 @@ export function TopBar() {
             </span>
           </button>
         ))}
+        </div>
         <button className="icon-btn" title="New workspace" onClick={s.addWorkspace}>
           <Plus size={16} />
         </button>
 
         {projMenu && (
-          <div className="menu" style={{ top: 46, left: 0, width: 300 }} onMouseLeave={() => setProjMenu(false)}>
+          <div className="menu" style={{ top: 44, left: 0, width: 300 }} onMouseLeave={() => setProjMenu(false)}>
             <div className="menu-title">Projects</div>
             {projects.map((x) => (
               <button
@@ -94,7 +109,7 @@ export function TopBar() {
               >
                 <Folder size={16} color="var(--muted)" />
                 <span style={{ flex: 1, minWidth: 0 }}>
-                  <div className="title" style={{ fontSize: 14 }}>
+                  <div className="title">
                     {x.name}
                   </div>
                   <div className="sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -104,30 +119,28 @@ export function TopBar() {
               </button>
             ))}
             <button className="menu-item" onClick={s.goHome}>
-              <FolderOpen size={16} color="var(--accent)" />
-              <span className="title" style={{ fontSize: 14 }}>
-                Open another folder…
-              </span>
+              <FolderOpen size={16} color="var(--muted)" />
+              <span className="title">Open another folder…</span>
             </button>
           </div>
         )}
       </div>
 
-      <button className="pill" onClick={s.closeProject}>
+      <button className="pill" title="Close this project: its agents stop" onClick={s.closeProject}>
         <X size={15} /> Close
       </button>
 
       <span className="spacer" />
 
-      <span className="pill" title="Running consoles">
-        <span className="dot" style={{ background: 'var(--live)', width: 7, height: 7 }} /> {live} <span className="muted">live</span>
+      <span className="pill" title="Agents running right now">
+        <span className="dot" style={{ background: 'var(--live)', width: 7, height: 7 }} /> {live} <span className="muted">running</span>
       </span>
-      <button className="pill usage-pill" title="Usage" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
+      <button className="pill usage-pill" title="How much of your plan you have used" onClick={() => s.set({ modal: useStore.getState().modal === 'usage' ? null : 'usage', usageView: 'usage' })}>
         <Info size={15} color="var(--muted)" />
         <ClaudeMark size={14} />
         {resets ? (
           <>
-            <span className="muted">resets</span> <span className="mono">{resets}</span>
+            <span className="muted">resets</span> {resets}
           </>
         ) : (
           <>
@@ -135,13 +148,13 @@ export function TopBar() {
           </>
         )}
       </button>
-      <button className="icon-btn" title="Mission Map" onClick={() => s.set({ modal: useStore.getState().modal === 'mission' ? null : 'mission' })}>
+      <button className="icon-btn" title="Mission map: all your agents at a glance" onClick={() => s.set({ modal: useStore.getState().modal === 'mission' ? null : 'mission' })}>
         <Briefcase size={17} />
       </button>
+      <ThemeToggle />
       <button className="icon-btn" title="Settings" onClick={() => s.set({ modal: 'settings' })}>
         <Settings size={17} />
       </button>
-      <span className="avatar" />
     </div>
   )
 }

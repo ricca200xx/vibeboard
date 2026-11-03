@@ -48,8 +48,9 @@ function Reading({ text, from, notes, onOpen }: { text: string; from?: string; n
 
 export function MarkdownStudio() {
   const p = useStore(project)!
-  const root = p.path
   const s = useStore.getState()
+  const [root, setRoot] = useState(s.studioRoot ?? p.path)
+  const roots = [p.path, ...(p.folders ?? [])]
   const [entries, setEntries] = useState<FileEntry[] | null>(null)
   const [query, setQuery] = useState('')
   const [file, setFile] = useState<{ path: string; saved: string; text: string } | null>(null)
@@ -60,7 +61,7 @@ export function MarkdownStudio() {
   const notes = useMemo(() => flatten(entries ?? []), [entries])
   const edited = !!file && file.text !== file.saved
 
-  const fail = (e: unknown) => setError((e as Error).message)
+  const fail = (e: unknown) => setError(/not a directory/.test((e as Error).message) ? 'This folder is not there any more. Disconnect it under Context › Folders, or plug its disk in.' : (e as Error).message)
   const loadTree = () => api.tree(root, 'md').then((r) => (setEntries(r.entries), flatten(r.entries)), (e) => (fail(e), [] as string[]))
   // Edits in Source are kept: they are saved before another note or another view replaces them.
   const save = async () => {
@@ -93,10 +94,23 @@ export function MarkdownStudio() {
   useEffect(() => {
     loadTree().then((all) => {
       const start = s.studioPath ?? all.find((x) => /^readme\.md$/i.test(x)) ?? all[0]
-      if (s.studioPath) s.set({ studioPath: null })
+      if (s.studioPath || s.studioRoot) s.set({ studioPath: null, studioRoot: null })
       if (start) openNote(start)
     })
   }, [root])
+
+  // Another folder: what was being edited is saved in the folder it belongs to first.
+  const switchRoot = async (next: string) => {
+    try {
+      await save()
+    } catch {
+      return
+    }
+    setFile(null)
+    setEntries(null)
+    setQuery('')
+    setRoot(next)
+  }
 
   const close = () => save().then(() => s.set({ modal: null }), () => {})
   const place = () => {
@@ -118,7 +132,17 @@ export function MarkdownStudio() {
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <b>Markdown</b>
-              <small>{p.name}</small>
+              {roots.length > 1 ? (
+                <select className="root-pick" aria-label="Which folder" value={root} onChange={(e) => switchRoot(e.target.value)}>
+                  {roots.map((r) => (
+                    <option key={r} value={r}>
+                      {r === p.path ? p.name : r.split('/').filter(Boolean).pop()}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <small>{p.name}</small>
+              )}
             </span>
             <button className="icon-btn sm" title="New note" onClick={() => setCreating((v) => !v)}>
               <Plus size={15} />
