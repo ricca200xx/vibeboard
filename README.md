@@ -136,6 +136,10 @@ every member runs your default agent, and its role travels with each hand-off it
 
 ## What You Can Do
 
+<p align="center">
+  <img src="docs/media/one-board.gif" alt="One vibeboard workspace with everything on it: four agents wired to an orchestrator get one order, a plan, build and review team gets a job, then a diagram of the repo, code, document and note cards, the dev server in a web tile, a kanban, a second brain as a link graph, the mission map and day mode" width="860">
+</p>
+
 - **Run many agents at once**, each in a real terminal, with your own `PATH` and sign-ins.
 - **Orchestrate them.** Wires pass work from one agent to the next:
   - *when done*: the first one's work goes on when it finishes;
@@ -231,6 +235,10 @@ vibeboard runs whichever of them are installed and on your `PATH`.
 | A second account                                 | yes                   | Codex                |
 
 ## Why vibeboard?
+
+<p align="center">
+  <img src="docs/media/tmux-vs-board.gif" alt="Six Claude Code agents in tmux: the job typed pane by pane, every permission question hunted down pane by pane. Then the same six agents on vibeboard: started at once, one order for all six, a console resized while they work, every question answered with one click, the mission map" width="860">
+</p>
 
 - **Real terminals, not a wrapper.** The CLI you know runs as it is, with your settings, plugins and
   sign-in. Nothing is emulated, and the terminal is always one click away.
